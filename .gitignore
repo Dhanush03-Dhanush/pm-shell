@@ -1,0 +1,26 @@
+# Local Jira mirror — contains credentials in config.json
+.jira/
+
+# Dev-time secrets bootstrap file
+jira-secrets
+jira-secrets.*
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Virtual envs
+.venv/
+venv/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
