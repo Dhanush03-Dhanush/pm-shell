@@ -25,7 +25,6 @@ from pm_shell.sync.clone import DirtyWorkspaceError, clone
 app = typer.Typer(
     name="pm",
     help="A git-like shell for Jira boards. Clone once, edit locally, push when ready.",
-    no_args_is_help=True,
     add_completion=False,
 )
 config_app = typer.Typer(help="Manage local pm-shell configuration.", no_args_is_help=True)
@@ -70,14 +69,24 @@ def _version_callback(value: bool) -> None:
         raise typer.Exit()
 
 
-@app.callback()
+@app.callback(invoke_without_command=True)
 def main(
+    ctx: typer.Context,
     version: Annotated[
         Optional[bool],
         typer.Option("--version", callback=_version_callback, is_eager=True, help="Show version and exit."),
     ] = None,
 ) -> None:
-    """pm — interact with a local Jira mirror."""
+    """pm — interact with a local Jira mirror. With no subcommand, opens the interactive shell."""
+    if ctx.invoked_subcommand is None:
+        from pm_shell.shell.repl import run_repl
+        raise typer.Exit(code=run_repl(app))
+
+
+@app.command("shell", help="Open the interactive pm-shell.")
+def cmd_shell() -> None:
+    from pm_shell.shell.repl import run_repl
+    raise typer.Exit(code=run_repl(app))
 
 
 @config_app.command("init")
