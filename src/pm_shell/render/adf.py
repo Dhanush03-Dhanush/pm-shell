@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 
 # Block-level node types — each contributes a paragraph break in plain rendering.
 _BLOCK_NODES = {
@@ -54,3 +54,27 @@ def adf_to_plain(node: Any) -> str:
         return inner
 
     return inner
+
+
+def plain_to_adf(text: Optional[str]) -> Optional[dict[str, Any]]:
+    """Wrap plain text into a minimal ADF doc. Blank lines become paragraph breaks.
+
+    Returns None for empty/None input so the field round-trips to a cleared description.
+    """
+    if text is None:
+        return None
+    cleaned = text.strip("\n")
+    if not cleaned.strip():
+        return None
+    paragraphs = [p for p in cleaned.split("\n\n")]
+    content = []
+    for para in paragraphs:
+        if not para.strip():
+            continue
+        content.append(
+            {
+                "type": "paragraph",
+                "content": [{"type": "text", "text": para}],
+            }
+        )
+    return {"type": "doc", "version": 1, "content": content}

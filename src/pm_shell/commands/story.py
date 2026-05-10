@@ -1,13 +1,23 @@
 from __future__ import annotations
 
+import re
 from typing import Annotated, Optional
 
 import typer
 from rich.console import Console
 
 from pm_shell.commands._context import resolve_story_key
+from pm_shell.commands._editor import open_editor
+from pm_shell.commands._mutate import (
+    append_comment,
+    apply_status,
+    load_and_save_story,
+)
+from pm_shell.config import load_config
+from pm_shell.render.adf import adf_to_plain, plain_to_adf
 from pm_shell.render.cards import story_card
 from pm_shell.render.tables import story_table
+from pm_shell.sync.aliases import canonicalize_priority, canonicalize_status
 from pm_shell.workspace.paths import resolve_context
 from pm_shell.workspace.tree import (
     WorkspaceMissingError,
@@ -69,3 +79,173 @@ def story_show(
         raise typer.Exit(code=1) from None
     latest = comments[-1] if comments else None
     console.print(story_card(story, tasks, latest))
+
+
+def _set_fields(
+    record: dict,
+    *,
+    status: Optional[str],
+    priority: Optional[str],
+    summary: Optional[str],
+    assignee: Optional[str],
+    add_labels: list[str],
+    description: Optional[str],
+    epic: Optional[str],
+) -> list[str]:
+    """Mutate `record` in place. Returns a list of human-readable change descriptions."""
+    cfg = load_config()
+    changes: list[str] = []
+
+    if status is not None:
+        canonical = canonicalize_status(status)
+        apply_status(record, canonical, cfg)
+        changes.append(f"status → {canonical} ({record['statusJira']})")
+
+    if priority is not None:
+        record["priority"] = canonicalize_priority(priority)
+        changes.append(f"priority → {record['priority']}")
+
+    if summary is not None:
+        record["summary"] = summary
+        changes.append(f"summary → {summary!r}")
+
+    if assignee is not None:
+        if assignee == "":
+            record["assignee"] = None
+            changes.append("assignee cleared")
+        else:
+            record["assignee"] = {"accountId": None, "displayName": None, "email": assignee}
+            changes.append(f"assignee → {assignee}")
+
+    if add_labels:
+        existing = record.get("labels") or []
+        merged = list(dict.fromkeys([*existing, *add_labels]))
+        record["labels"] = merged
+        changes.append(f"labels += {add_labels}")
+
+    if description is not None:
+        record["description"] = plain_to_adf(description)
+        changes.append("description updated")
+
+    if epic is not None:
+        record["epic"] = epic or None
+        changes.append(f"epic → {epic or 'cleared'}")
+
+    return changes
+
+
+@app.command("set")
+def story_set(
+    key: Annotated[Optional[str], typer.Argument(help="Story key. Inferred from cwd if omitted.")] = None,
+    status: Annotated[Optional[str], typer.Option("--status", help="todo | in-progress | done | blocked (aliases accepted).")] = None,
+    priority: Annotated[Optional[str], typer.Option("--priority", help="low | medium | high | critical.")] = None,
+    summary: Annotated[Optional[str], typer.Option("--summary", help="New title.")] = None,
+    assignee: Annotated[Optional[str], typer.Option("--assignee", help="User email. Pass empty string to clear.")] = None,
+    label: Annotated[Optional[list[str]], typer.Option("--label", help="Add a label. Repeatable.")] = None,
+    description: Annotated[Optional[str], typer.Option("--description", help="Inline description (use `pm story edit` for multi-line).")] = None,
+    epic: Annotated[Optional[str], typer.Option("--epic", help="Reparent to a different epic key.")] = None,
+) -> None:
+    """Update one or more fields on a story inline."""
+    resolved = resolve_story_key(key)
+    try:
+        record = load_and_save_story(
+            resolved,
+            lambda r: _set_fields(
+                r,
+                status=status, priority=priority, summary=summary,
+                assignee=assignee, add_labels=label or [],
+                description=description, epic=epic,
+            ),
+        )
+    except WorkspaceMissingError as exc:
+        err_console.print(f"[red]{exc}[/]")
+        raise typer.Exit(code=1) from None
+
+    console.print(f"[green]✓[/] {resolved} updated")
+
+
+@app.command("start")
+def story_start(
+    key: Annotated[Optional[str], typer.Argument(help="Story key. Inferred from cwd if omitted.")] = None,
+) -> None:
+    """Shorthand: set status to in-progress."""
+    resolved = resolve_story_key(key)
+    cfg = load_config()
+    load_and_save_story(resolved, lambda r: apply_status(r, "in-progress", cfg))
+    console.print(f"[green]✓[/] {resolved} → in-progress")
+
+
+@app.command("done")
+def story_done(
+    key: Annotated[Optional[str], typer.Argument(help="Story key. Inferred from cwd if omitted.")] = None,
+) -> None:
+    """Shorthand: set status to done. Warns if incomplete tasks remain."""
+    resolved = resolve_story_key(key)
+    try:
+        tasks = load_tasks(resolved)
+    except WorkspaceMissingError as exc:
+        err_console.print(f"[red]{exc}[/]")
+        raise typer.Exit(code=1) from None
+    incomplete = [t for t in tasks if not t.get("done")]
+    if incomplete:
+        console.print(
+            f"[yellow]warning:[/] {len(incomplete)} of {len(tasks)} tasks still open "
+            f"on {resolved}."
+        )
+    cfg = load_config()
+    load_and_save_story(resolved, lambda r: apply_status(r, "done", cfg))
+    console.print(f"[green]✓[/] {resolved} → done")
+
+
+_KEY_RE = re.compile(r"^[A-Z][A-Z0-9]*-\d+$")
+
+
+@app.command("block")
+def story_block(
+    arg1: Annotated[Optional[str], typer.Argument(help="Story key (optional) or reason.")] = None,
+    arg2: Annotated[Optional[str], typer.Argument(help="Reason (when story key is given first).")] = None,
+) -> None:
+    """Shorthand: set status to blocked. Optional reason is appended as a comment."""
+    if arg1 is None:
+        resolved = resolve_story_key(None)
+        reason: Optional[str] = None
+    elif arg2 is None:
+        if _KEY_RE.match(arg1):
+            resolved = arg1
+            reason = None
+        else:
+            resolved = resolve_story_key(None)
+            reason = arg1
+    else:
+        if not _KEY_RE.match(arg1):
+            raise typer.BadParameter(f"Expected a story key, got {arg1!r}")
+        resolved = arg1
+        reason = arg2
+
+    cfg = load_config()
+    load_and_save_story(resolved, lambda r: apply_status(r, "blocked", cfg))
+    msg = f"[green]✓[/] {resolved} → blocked"
+    if reason:
+        append_comment(resolved, f"Blocked: {reason}", cfg=cfg)
+        msg += " (comment queued)"
+    console.print(msg)
+
+
+@app.command("edit")
+def story_edit(
+    key: Annotated[Optional[str], typer.Argument(help="Story key. Inferred from cwd if omitted.")] = None,
+) -> None:
+    """Open the story description in $EDITOR."""
+    resolved = resolve_story_key(key)
+    try:
+        story = load_story(resolved)
+    except WorkspaceMissingError as exc:
+        err_console.print(f"[red]{exc}[/]")
+        raise typer.Exit(code=1) from None
+    initial = adf_to_plain(story.get("description"))
+    new_text = open_editor(initial, suffix=".md")
+    if new_text is None:
+        console.print("[dim]no changes[/]")
+        return
+    load_and_save_story(resolved, lambda r: r.update({"description": plain_to_adf(new_text)}))
+    console.print(f"[green]✓[/] {resolved} description updated")

@@ -37,6 +37,28 @@ app.add_typer(comment_cmd.app, name="comment")
 app.command("ls")(nav.ls)
 app.command("tree")(nav.tree)
 app.command("show")(nav.show)
+app.command("start", help="Shorthand for `story start` (cwd-inferred).")(story_cmd.story_start)
+app.command("done", help="Shorthand for `story done` (cwd-inferred).")(story_cmd.story_done)
+app.command("block", help="Shorthand for `story block` (cwd-inferred).")(story_cmd.story_block)
+app.command("set", help="Shorthand for `story set` (cwd-inferred).")(story_cmd.story_set)
+
+
+@app.command("edit")
+def smart_edit() -> None:
+    """Open description in $EDITOR — story or epic depending on cwd."""
+    from pm_shell.workspace.paths import resolve_context
+    epic_key, story_key = resolve_context()
+    if story_key:
+        story_cmd.story_edit(story_key)
+        return
+    if epic_key:
+        epic_cmd.epic_edit(epic_key)
+        return
+    err_console.print(
+        "[yellow]No context.[/] Run from inside an epic or story directory, "
+        "or use `pm epic edit KEY` / `pm story edit KEY`."
+    )
+    raise typer.Exit(code=1)
 
 console = Console()
 err_console = Console(stderr=True)
