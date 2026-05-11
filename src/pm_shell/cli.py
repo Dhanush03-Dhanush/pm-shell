@@ -10,6 +10,7 @@ from pm_shell.commands import comment as comment_cmd
 from pm_shell.commands import epic as epic_cmd
 from pm_shell.commands import nav
 from pm_shell.commands import story as story_cmd
+from pm_shell.commands import sync as sync_cmd
 from pm_shell.commands import task as task_cmd
 from pm_shell.config import (
     ConfigNotFoundError,
@@ -36,6 +37,8 @@ app.add_typer(comment_cmd.app, name="comment")
 app.command("ls")(nav.ls)
 app.command("tree")(nav.tree)
 app.command("show")(nav.show)
+app.command("status", help="Show all locally modified, added, or deleted items.")(sync_cmd.status)
+app.command("diff", help="Print unified diffs for changed files.")(sync_cmd.diff)
 app.command("start", help="Shorthand for `story start` (cwd-inferred).")(story_cmd.story_start)
 app.command("done", help="Shorthand for `story done` (cwd-inferred).")(story_cmd.story_done)
 app.command("block", help="Shorthand for `story block` (cwd-inferred).")(story_cmd.story_block)

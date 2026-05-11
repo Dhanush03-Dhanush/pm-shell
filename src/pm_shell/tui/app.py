@@ -81,10 +81,12 @@ class PMShell(App):
     BINDINGS = [
         Binding("ctrl+d", "quit", "quit", show=True),
         Binding("ctrl+l", "clear_log", "clear", show=True),
-        Binding("pageup", "scroll_log_up", "scroll", show=True, priority=True),
-        Binding("pagedown", "scroll_log_down", "", show=False, priority=True),
-        Binding("up", "history_back", "history", show=True, priority=True),
-        Binding("down", "history_forward", "", show=False, priority=True),
+        Binding("pageup", "scroll_log_up", "scroll", show=True),
+        Binding("pagedown", "scroll_log_down", "", show=False),
+        # No priority — keep ↑/↓ history at the bottom of the chain so widgets
+        # like ListView (in DiffScreen) handle them first.
+        Binding("up", "history_back", "history", show=True),
+        Binding("down", "history_forward", "", show=False),
     ]
 
     def __init__(self, typer_app: "typer.Typer") -> None:
@@ -203,6 +205,9 @@ class PMShell(App):
         if head == "clear":
             log.clear()
             return
+        if head == "diff" and not rest:
+            self._open_diff_screen()
+            return
 
         if head not in self._known_commands:
             hint = difflib.get_close_matches(head, self._known_commands, n=1)
@@ -265,6 +270,18 @@ class PMShell(App):
             log.write(Text.from_markup(f"[red]cd:[/] not a directory: {target_abs}"))
         except PermissionError:
             log.write(Text.from_markup(f"[red]cd:[/] permission denied: {target_abs}"))
+
+    def _open_diff_screen(self) -> None:
+        from pm_shell.sync.diff import compute_changes
+        from pm_shell.tui.diff_screen import DiffScreen
+
+        changes = compute_changes()
+        if not changes:
+            self.query_one("#log", RichLog).write(
+                Text.from_markup("[dim]workspace is clean — nothing to diff[/dim]")
+            )
+            return
+        self.push_screen(DiffScreen(changes))
 
     # ── Actions ──────────────────────────────────────────────────────────────
     def action_clear_log(self) -> None:
@@ -349,10 +366,11 @@ _HELP_TEXT = Text.from_markup("""\
   [dim]epic undelete KAN-4[/]                clear the deletion mark
   [dim]story undelete KAN-5[/]
 
-[bold]SYNC[/]     [italic dim]coming in Phases 5–7 — currently everything stays local[/]
-  [dim]status[/]                          show what's dirty
-  [dim]diff[/]                            field-level changes
-  [dim]push[/] [dim]/[/] [dim]pull[/]                      sync with Jira
+[bold]SYNC[/]
+  [yellow]status[/]                          summary of all dirty items (created/modified/deleted)
+  [yellow]diff[/]                            opens a viewer (Esc to return); pick files with ↑/↓
+  [yellow]diff KAN-5[/]                      inline diff for one item
+  [dim]push[/] [dim]/[/] [dim]pull[/]                      sync with Jira (Phase 6/7)
 
 [bold]SHELL[/]
   ↑[dim]/[/]↓        command history          →     accept ghost suggestion

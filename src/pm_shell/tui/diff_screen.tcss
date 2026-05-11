@@ -1,0 +1,47 @@
+/* Diff modal: file list on the left, unified diff on the right. */
+
+Screen {
+    background: $background;
+}
+
+#diff-header {
+    height: 1;
+    padding: 0 1;
+    background: $background;
+    color: $text-muted;
+}
+
+#diff-body {
+    height: 1fr;
+}
+
+#diff-files {
+    width: 32;
+    border-right: solid $primary-darken-3;
+    background: $background;
+    background-tint: $background 0%;
+    scrollbar-size-vertical: 1;
+}
+
+#diff-files > ListItem {
+    padding: 0 1;
+    background: $background;
+}
+
+/* Textual marks the focused ListItem with the `-highlight` class (single dash).
+   Yellow background keeps the per-kind/per-type text colors readable. */
+#diff-files > ListItem.-highlight {
+    background: yellow 25%;
+}
+
+#diff-files:focus {
+    background: $background;
+    background-tint: $background 0%;
+}
+
+#diff-view {
+    height: 1fr;
+    padding: 0 1;
+    background: $background;
+    scrollbar-size-vertical: 1;
+}

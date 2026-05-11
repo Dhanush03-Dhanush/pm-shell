@@ -6,6 +6,7 @@ from typing import Any, Callable, Optional
 
 from pm_shell.config import Config, save_config, workspace_dir
 from pm_shell.jira.client import DEFAULT_ISSUE_FIELDS, JiraClient
+from pm_shell.sync.shape import comment_shape, epic_shape, story_shape, task_shape
 from pm_shell.sync.workflow import detect_status_map
 from pm_shell.workspace.io import atomic_write_json
 from pm_shell.workspace.paths import (
@@ -25,96 +26,6 @@ ProgressFn = Callable[[str], None]
 
 def _noop(_: str) -> None:
     pass
-
-
-def _user_record(user: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
-    if not user:
-        return None
-    return {
-        "accountId": user.get("accountId"),
-        "displayName": user.get("displayName"),
-        "email": user.get("emailAddress"),
-    }
-
-
-def _canonicalize_status(status_name: str, status_map: dict[str, Optional[str]]) -> Optional[str]:
-    for canonical, jira_name in status_map.items():
-        if jira_name and jira_name.lower() == status_name.lower():
-            return canonical
-    return None
-
-
-def _epic_record(issue: dict[str, Any], status_map: dict[str, Optional[str]]) -> dict[str, Any]:
-    fields = issue.get("fields", {})
-    status = fields.get("status") or {}
-    status_name = status.get("name", "")
-    return {
-        "key": issue["key"],
-        "issueType": (fields.get("issuetype") or {}).get("name"),
-        "summary": fields.get("summary", ""),
-        "status": _canonicalize_status(status_name, status_map),
-        "statusJira": status_name,
-        "priority": (fields.get("priority") or {}).get("name", "").lower() or None,
-        "owner": _user_record(fields.get("assignee")),
-        "labels": fields.get("labels") or [],
-        "description": fields.get("description"),
-        "created": fields.get("created"),
-        "updated": fields.get("updated"),
-    }
-
-
-def _story_record(
-    issue: dict[str, Any],
-    status_map: dict[str, Optional[str]],
-    epic_key: Optional[str],
-) -> dict[str, Any]:
-    fields = issue.get("fields", {})
-    status = fields.get("status") or {}
-    status_name = status.get("name", "")
-    return {
-        "key": issue["key"],
-        "issueType": (fields.get("issuetype") or {}).get("name"),
-        "summary": fields.get("summary", ""),
-        "status": _canonicalize_status(status_name, status_map),
-        "statusJira": status_name,
-        "priority": (fields.get("priority") or {}).get("name", "").lower() or None,
-        "assignee": _user_record(fields.get("assignee")),
-        "labels": fields.get("labels") or [],
-        "epic": epic_key,
-        "description": fields.get("description"),
-        "created": fields.get("created"),
-        "updated": fields.get("updated"),
-    }
-
-
-def _task_record(
-    index: int,
-    issue: dict[str, Any],
-    status_map: dict[str, Optional[str]],
-) -> dict[str, Any]:
-    fields = issue.get("fields", {})
-    status = fields.get("status") or {}
-    status_name = status.get("name", "")
-    canonical = _canonicalize_status(status_name, status_map)
-    return {
-        "id": index,
-        "key": issue["key"],
-        "title": fields.get("summary", ""),
-        "done": canonical == "done",
-        "status": canonical,
-        "statusJira": status_name,
-        "assignee": _user_record(fields.get("assignee")),
-    }
-
-
-def _comment_record(comment: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "id": comment.get("id"),
-        "author": _user_record(comment.get("author")),
-        "body": comment.get("body"),
-        "created": comment.get("created"),
-        "updated": comment.get("updated"),
-    }
 
 
 def _parent_key(issue: dict[str, Any]) -> Optional[str]:
@@ -187,7 +98,7 @@ def clone(
 
     epic_dirs: dict[str, Path] = {}
     for epic in epics:
-        record = _epic_record(epic, status_map)
+        record = epic_shape(epic, status_map)
         dirname = issue_dirname(record["key"], record["summary"])
         edir = epics_root / dirname
         edir.mkdir(parents=True, exist_ok=True)
@@ -213,7 +124,7 @@ def clone(
                 container = epic_dir
                 effective_epic_key = parent
 
-            srecord = _story_record(story, status_map, effective_epic_key)
+            srecord = story_shape(story, status_map, effective_epic_key)
             sdirname = issue_dirname(srecord["key"], srecord["summary"])
             sdir = container / sdirname
             sdir.mkdir(parents=True, exist_ok=True)
@@ -222,7 +133,7 @@ def clone(
 
             story_subs = subtasks_by_parent.get(srecord["key"], [])
             tasks = [
-                _task_record(i + 1, st, status_map) for i, st in enumerate(story_subs)
+                task_shape(i + 1, st, status_map) for i, st in enumerate(story_subs)
             ]
             atomic_write_json(sdir / "tasks.json", tasks)
             for st in story_subs:
@@ -234,7 +145,7 @@ def clone(
             comments = client.get_comments(srecord["key"])
             atomic_write_json(
                 sdir / "comments.json",
-                [_comment_record(c) for c in comments],
+                [comment_shape(c) for c in comments],
             )
             comment_count += len(comments)
 
