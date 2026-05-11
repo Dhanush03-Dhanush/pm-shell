@@ -4,7 +4,6 @@ import re
 from typing import Annotated, Optional
 
 import typer
-from rich.console import Console
 
 from pm_shell.commands._context import resolve_story_key
 from pm_shell.commands._editor import open_editor
@@ -12,13 +11,21 @@ from pm_shell.commands._mutate import (
     append_comment,
     apply_status,
     load_and_save_story,
+    next_local_key,
 )
 from pm_shell.config import load_config
+from pm_shell.io import console, err_console
 from pm_shell.render.adf import adf_to_plain, plain_to_adf
 from pm_shell.render.cards import story_card
 from pm_shell.render.tables import story_table
 from pm_shell.sync.aliases import canonicalize_priority, canonicalize_status
-from pm_shell.workspace.paths import resolve_context
+from pm_shell.workspace.io import atomic_write_json
+from pm_shell.workspace.paths import (
+    find_epic_dir,
+    issue_dirname,
+    resolve_context,
+    unparented_dir,
+)
 from pm_shell.workspace.tree import (
     WorkspaceMissingError,
     list_stories,
@@ -28,8 +35,6 @@ from pm_shell.workspace.tree import (
 )
 
 app = typer.Typer(help="Story operations.", no_args_is_help=True)
-console = Console()
-err_console = Console(stderr=True)
 
 
 @app.command("list")
@@ -249,3 +254,107 @@ def story_edit(
         return
     load_and_save_story(resolved, lambda r: r.update({"description": plain_to_adf(new_text)}))
     console.print(f"[green]✓[/] {resolved} description updated")
+
+
+@app.command("delete")
+def story_delete(
+    key: Annotated[Optional[str], typer.Argument(help="Story key. Inferred from cwd if omitted.")] = None,
+) -> None:
+    """Mark a story for deletion. Executed on next `push`.
+
+    Unpushed (NEW-*) stories are removed immediately since they don't exist in Jira yet.
+    """
+    import shutil
+
+    from pm_shell.workspace.paths import find_story_dir
+
+    resolved = resolve_story_key(key)
+    try:
+        story = load_story(resolved)
+    except WorkspaceMissingError as exc:
+        err_console.print(f"[red]{exc}[/]")
+        raise typer.Exit(code=1) from None
+
+    sdir = find_story_dir(resolved)
+    if story.get("_unpushed") and sdir is not None:
+        shutil.rmtree(sdir)
+        console.print(f"[red]-[/] {resolved} removed (was unpushed)")
+        return
+
+    load_and_save_story(resolved, lambda r: r.update({"_deleted": True}))
+    console.print(f"[red]✗[/] {resolved} marked for deletion  [dim](run `push` to apply)[/]")
+
+
+@app.command("undelete")
+def story_undelete(
+    key: Annotated[Optional[str], typer.Argument(help="Story key. Inferred from cwd if omitted.")] = None,
+) -> None:
+    """Clear the deletion mark on a story."""
+    resolved = resolve_story_key(key)
+    try:
+        load_and_save_story(resolved, lambda r: r.pop("_deleted", None))
+    except WorkspaceMissingError as exc:
+        err_console.print(f"[red]{exc}[/]")
+        raise typer.Exit(code=1) from None
+    console.print(f"[green]✓[/] {resolved} restored")
+
+
+@app.command("create")
+def story_create(
+    summary: Annotated[str, typer.Argument(help="Story title.")],
+    epic: Annotated[Optional[str], typer.Option("--epic", "-e", help="Parent epic key. Inferred from cwd if inside an epic dir.")] = None,
+    priority: Annotated[Optional[str], typer.Option("--priority")] = None,
+    assignee: Annotated[Optional[str], typer.Option("--assignee", help="User email.")] = None,
+    label: Annotated[Optional[list[str]], typer.Option("--label", help="Add a label. Repeatable.")] = None,
+    description: Annotated[Optional[str], typer.Option("--description")] = None,
+) -> None:
+    """Create a new story locally. The Jira issue is created on `pm push`."""
+    if not summary.strip():
+        raise typer.BadParameter("Story summary cannot be empty.")
+
+    if epic is None:
+        cwd_epic, _ = resolve_context()
+        epic = cwd_epic
+
+    epic_dir = find_epic_dir(epic) if epic else None
+    if epic and epic_dir is None:
+        raise typer.BadParameter(f"Epic {epic} not found in workspace.")
+
+    cfg = load_config()
+    new_key = next_local_key(cfg)
+
+    record = {
+        "key": new_key,
+        "issueType": "Story",
+        "summary": summary.strip(),
+        "status": "todo",
+        "statusJira": cfg.status_map.get("todo"),
+        "priority": canonicalize_priority(priority) if priority else None,
+        "assignee": {"accountId": None, "displayName": None, "email": assignee} if assignee else None,
+        "labels": label or [],
+        "epic": epic,
+        "description": plain_to_adf(description) if description else None,
+        "_unpushed": True,
+    }
+
+    if epic_dir is not None:
+        container = epic_dir
+    else:
+        container = unparented_dir()
+        container.mkdir(parents=True, exist_ok=True)
+
+    sdir = container / issue_dirname(new_key, summary)
+    try:
+        sdir.mkdir(parents=True, exist_ok=False)
+    except FileExistsError:
+        err_console.print(f"[red]error:[/] directory already exists: {sdir}")
+        raise typer.Exit(code=1) from None
+    atomic_write_json(sdir / "story.json", record)
+    atomic_write_json(sdir / "tasks.json", [])
+    atomic_write_json(sdir / "comments.json", [])
+
+    epic_hint = f" under [cyan]{epic}[/]" if epic else " [yellow](no epic)[/]"
+    console.print(
+        f"[green]+[/] [magenta bold]{new_key}[/]: {summary.strip()}{epic_hint}  "
+        f"[dim](unpushed — run `push` to create in Jira)[/]"
+    )

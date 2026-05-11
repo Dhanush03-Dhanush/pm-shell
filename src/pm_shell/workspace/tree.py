@@ -50,21 +50,31 @@ def iter_story_dirs(epic_key: Optional[str] = None) -> Iterator[Path]:
                 yield child
 
 
-def list_epics() -> list[dict[str, Any]]:
+def list_epics(*, include_deleted: bool = False) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for d in iter_epic_dirs():
         epic_path = d / "epic.json"
-        if epic_path.exists():
-            out.append(read_json(epic_path))
+        if not epic_path.exists():
+            continue
+        record = read_json(epic_path)
+        if not include_deleted and record.get("_deleted"):
+            continue
+        out.append(record)
     return out
 
 
-def list_stories(epic_key: Optional[str] = None) -> list[dict[str, Any]]:
+def list_stories(
+    epic_key: Optional[str] = None, *, include_deleted: bool = False
+) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for d in iter_story_dirs(epic_key):
         story_path = d / "story.json"
-        if story_path.exists():
-            out.append(read_json(story_path))
+        if not story_path.exists():
+            continue
+        record = read_json(story_path)
+        if not include_deleted and record.get("_deleted"):
+            continue
+        out.append(record)
     return out
 
 
@@ -102,5 +112,5 @@ def load_comments(story_key: str) -> list[dict[str, Any]]:
     return read_json(path)
 
 
-def stories_for_epic(epic_key: str) -> list[dict[str, Any]]:
-    return list_stories(epic_key)
+def stories_for_epic(epic_key: str, *, include_deleted: bool = False) -> list[dict[str, Any]]:
+    return list_stories(epic_key, include_deleted=include_deleted)

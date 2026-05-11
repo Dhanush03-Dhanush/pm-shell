@@ -8,18 +8,15 @@ from typing import TYPE_CHECKING
 import click
 from prompt_toolkit import PromptSession
 from prompt_toolkit.formatted_text import FormattedText
-from rich.console import Console
 
 from pm_shell import __version__
 from pm_shell.config import ConfigNotFoundError, load_config, workspace_dir
+from pm_shell.io import console, err_console
 from pm_shell.shell.completion import PMCompleter
 from pm_shell.workspace.paths import resolve_context, resolve_workspace_target
 
 if TYPE_CHECKING:
     import typer
-
-console = Console()
-err_console = Console(stderr=True)
 
 _EXIT_WORDS = {"exit", "quit", ":q"}
 

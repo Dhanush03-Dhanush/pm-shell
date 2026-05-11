@@ -4,9 +4,13 @@ from pathlib import Path
 from typing import Annotated, Optional
 
 import typer
-from rich.console import Console
 
 from pm_shell import __version__
+from pm_shell.commands import comment as comment_cmd
+from pm_shell.commands import epic as epic_cmd
+from pm_shell.commands import nav
+from pm_shell.commands import story as story_cmd
+from pm_shell.commands import task as task_cmd
 from pm_shell.config import (
     ConfigNotFoundError,
     config_path,
@@ -14,11 +18,7 @@ from pm_shell.config import (
     save_config,
     secrets_to_config,
 )
-from pm_shell.commands import comment as comment_cmd
-from pm_shell.commands import epic as epic_cmd
-from pm_shell.commands import nav
-from pm_shell.commands import story as story_cmd
-from pm_shell.commands import task as task_cmd
+from pm_shell.io import console, err_console
 from pm_shell.jira.client import JiraClient, JiraHTTPError
 from pm_shell.sync.clone import DirtyWorkspaceError, clone
 
@@ -59,9 +59,6 @@ def smart_edit() -> None:
     )
     raise typer.Exit(code=1)
 
-console = Console()
-err_console = Console(stderr=True)
-
 
 def _version_callback(value: bool) -> None:
     if value:
@@ -77,14 +74,29 @@ def main(
         typer.Option("--version", callback=_version_callback, is_eager=True, help="Show version and exit."),
     ] = None,
 ) -> None:
-    """pm — interact with a local Jira mirror. With no subcommand, opens the interactive shell."""
+    """pm — interact with a local Jira mirror. With no subcommand, opens the Textual shell."""
     if ctx.invoked_subcommand is None:
-        from pm_shell.shell.repl import run_repl
-        raise typer.Exit(code=run_repl(app))
+        _launch_shell()
 
 
-@app.command("shell", help="Open the interactive pm-shell.")
-def cmd_shell() -> None:
+@app.command("shell", help="Open the interactive pm-shell (Textual TUI).")
+def cmd_shell(
+    simple: Annotated[
+        bool,
+        typer.Option("--simple", help="Use the lightweight prompt_toolkit REPL instead of the TUI."),
+    ] = False,
+) -> None:
+    _launch_shell(simple=simple)
+
+
+def _launch_shell(*, simple: bool = False) -> None:
+    """Open either the Textual TUI (default) or the prompt_toolkit REPL (--simple / non-TTY)."""
+    import sys
+
+    use_tui = not simple and sys.stdin.isatty() and sys.stdout.isatty()
+    if use_tui:
+        from pm_shell.tui import run_tui
+        raise typer.Exit(code=run_tui(app))
     from pm_shell.shell.repl import run_repl
     raise typer.Exit(code=run_repl(app))
 

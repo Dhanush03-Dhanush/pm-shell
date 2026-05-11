@@ -14,7 +14,7 @@ from prompt_toolkit.completion import (
 from prompt_toolkit.document import Document
 
 from pm_shell.sync.aliases import CANONICAL_PRIORITIES, CANONICAL_STATUSES
-from pm_shell.workspace.paths import baseline_dir, navigable_keys
+from pm_shell.workspace.paths import baseline_dir, resolve_context
 
 if TYPE_CHECKING:
     import typer
@@ -28,12 +28,13 @@ class PMCompleter(Completer):
     """Context-aware completer for the pm-shell REPL.
 
     Resolves completions in this order:
-      1. `cd <path>`        → filesystem paths
-      2. `--status <value>` → canonical statuses
-      3. `--priority <val>` → canonical priorities
-      4. first token        → top-level commands (REPL builtins + typer subcommands)
-      5. second token       → subcommands of the named command
-      6. positional after a verb → Jira keys discovered in `.jira/.baseline/`
+      1. `cd|ls|tree <path>` → filesystem paths
+      2. `cd|ls|tree <key>`  → Jira keys scoped to cwd (root → epics; in epic → its stories)
+      3. `--status <value>`  → canonical statuses
+      4. `--priority <val>`  → canonical priorities
+      5. first token         → top-level commands (REPL builtins + typer subcommands)
+      6. second token        → subcommands of the named command
+      7. positional after a verb → all Jira keys (epic + story + sub-task)
     """
 
     def __init__(self, app: "typer.Typer") -> None:
@@ -46,7 +47,6 @@ class PMCompleter(Completer):
         }
         self._path_completer = PathCompleter(expanduser=True)
         self._all_keys_cache: Optional[list[str]] = None
-        self._nav_keys_cache: Optional[list[str]] = None
 
     def _all_keys(self) -> list[str]:
         if self._all_keys_cache is None:
@@ -58,15 +58,19 @@ class PMCompleter(Completer):
             )
         return self._all_keys_cache
 
-    def _nav_keys(self) -> list[str]:
-        if self._nav_keys_cache is None:
-            self._nav_keys_cache = navigable_keys()
-        return self._nav_keys_cache
+    def _scoped_nav_keys(self) -> list[str]:
+        """Children of cwd that can be `cd`-ed into. Not cached — cwd may change between calls."""
+        from pm_shell.workspace.tree import list_epics, stories_for_epic
+        epic_key, story_key = resolve_context()
+        if story_key:
+            return []
+        if epic_key:
+            return [s["key"] for s in stories_for_epic(epic_key)]
+        return [e["key"] for e in list_epics()]
 
     def refresh_keys(self) -> None:
         """Invalidate cached key lists — call after operations that may add/remove keys."""
         self._all_keys_cache = None
-        self._nav_keys_cache = None
 
     def get_completions(
         self, document: Document, complete_event: CompleteEvent
@@ -86,7 +90,7 @@ class PMCompleter(Completer):
                 sub_doc = Document(partial, len(partial))
                 yield from self._path_completer.get_completions(sub_doc, complete_event)
             else:
-                yield from _matches(self._nav_keys(), partial)
+                yield from _matches(self._scoped_nav_keys(), partial)
             return
 
         if preceding:

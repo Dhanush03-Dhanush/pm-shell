@@ -4,10 +4,10 @@ from pathlib import Path
 from typing import Annotated, Optional
 
 import typer
-from rich.console import Console
 from rich.tree import Tree
 
 from pm_shell.config import workspace_dir
+from pm_shell.io import console, err_console
 from pm_shell.render.cards import epic_card, story_card
 from pm_shell.render.styles import style_priority, style_status, user_label
 from pm_shell.render.tables import epic_table, story_table, task_table
@@ -26,9 +26,6 @@ from pm_shell.workspace.tree import (
     load_tasks,
     stories_for_epic,
 )
-
-console = Console()
-err_console = Console(stderr=True)
 
 
 def _classify(path: Path) -> tuple[str, Optional[str], Optional[str]]:
@@ -171,7 +168,8 @@ def _story_tree_node(parent: Tree, story: dict) -> None:
     )
     for t in tasks:
         check = "[green]✓[/]" if t.get("done") else "[dim]·[/]"
-        node.add(f"{check} [dim]{t.get('key', '')}[/]  {t.get('title', '')}")
+        key_label = t.get("key") or "[dim](new)[/]"
+        node.add(f"{check} [green]{key_label}[/]  {t.get('title', '')}")
 
 
 def tree(
@@ -193,7 +191,8 @@ def tree(
         tasks = load_tasks(story_key)
         for t in tasks:
             check = "[green]✓[/]" if t.get("done") else "[dim]·[/]"
-            root.add(f"{check} [dim]{t.get('key', '')}[/]  {t.get('title', '')}")
+            key_label = t.get("key") or "[dim](new)[/]"
+            root.add(f"{check} [green]{key_label}[/]  {t.get('title', '')}")
         console.print(root)
         return
 

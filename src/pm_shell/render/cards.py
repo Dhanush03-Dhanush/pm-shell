@@ -96,14 +96,14 @@ def story_card(
         sub.add_column(justify="right", style="dim", no_wrap=True)
         sub.add_column(no_wrap=True)
         sub.add_column()
-        sub.add_column()
+        sub.add_column(style="green", no_wrap=True)
         for t in tasks:
             check = "[green]✓[/green]" if t.get("done") else "[dim]·[/dim]"
             sub.add_row(
                 str(t.get("id", "")),
                 check,
                 t.get("title", ""),
-                t.get("key", ""),
+                t.get("key", "") or "",
             )
         blocks.append(sub)
 
