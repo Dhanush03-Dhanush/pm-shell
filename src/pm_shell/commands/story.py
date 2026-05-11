@@ -96,6 +96,7 @@ def _set_fields(
     add_labels: list[str],
     description: Optional[str],
     epic: Optional[str],
+    points: Optional[int],
 ) -> list[str]:
     """Mutate `record` in place. Returns a list of human-readable change descriptions."""
     cfg = load_config()
@@ -136,6 +137,10 @@ def _set_fields(
         record["epic"] = epic or None
         changes.append(f"epic → {epic or 'cleared'}")
 
+    if points is not None:
+        record["points"] = points
+        changes.append(f"points → {points}")
+
     return changes
 
 
@@ -149,6 +154,7 @@ def story_set(
     label: Annotated[Optional[list[str]], typer.Option("--label", help="Add a label. Repeatable.")] = None,
     description: Annotated[Optional[str], typer.Option("--description", help="Inline description (use `pm story edit` for multi-line).")] = None,
     epic: Annotated[Optional[str], typer.Option("--epic", help="Reparent to a different epic key.")] = None,
+    points: Annotated[Optional[int], typer.Option("--points", help="Story points (integer).")] = None,
 ) -> None:
     """Update one or more fields on a story inline."""
     resolved = resolve_story_key(key)
@@ -159,7 +165,7 @@ def story_set(
                 r,
                 status=status, priority=priority, summary=summary,
                 assignee=assignee, add_labels=label or [],
-                description=description, epic=epic,
+                description=description, epic=epic, points=points,
             ),
         )
     except WorkspaceMissingError as exc:
@@ -307,6 +313,7 @@ def story_create(
     assignee: Annotated[Optional[str], typer.Option("--assignee", help="User email.")] = None,
     label: Annotated[Optional[list[str]], typer.Option("--label", help="Add a label. Repeatable.")] = None,
     description: Annotated[Optional[str], typer.Option("--description")] = None,
+    points: Annotated[Optional[int], typer.Option("--points", help="Story points (integer).")] = None,
 ) -> None:
     """Create a new story locally. The Jira issue is created on `pm push`."""
     if not summary.strip():
@@ -333,6 +340,7 @@ def story_create(
         "assignee": {"accountId": None, "displayName": None, "email": assignee} if assignee else None,
         "labels": label or [],
         "epic": epic,
+        "points": points,
         "description": plain_to_adf(description) if description else None,
         "_unpushed": True,
     }

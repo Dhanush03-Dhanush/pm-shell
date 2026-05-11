@@ -35,6 +35,8 @@ if TYPE_CHECKING:
 
 _EXIT_WORDS = {"exit", "quit", ":q"}
 
+_KIND_COLOR = {"created": "green", "modified": "yellow", "deleted": "red"}
+
 
 class PMInput(Input):
     """Input that accepts the ghost-text suggestion on Tab (in addition to →)."""
@@ -208,6 +210,9 @@ class PMShell(App):
         if head == "diff" and not rest:
             self._open_diff_screen()
             return
+        if head == "merge" and "--yes" not in rest and "-y" not in rest and "--dry-run" not in rest:
+            self._open_merge_confirm(rest)
+            return
 
         if head not in self._known_commands:
             hint = difflib.get_close_matches(head, self._known_commands, n=1)
@@ -283,6 +288,45 @@ class PMShell(App):
             return
         self.push_screen(DiffScreen(changes))
 
+    def _open_merge_confirm(self, extra_args: list[str]) -> None:
+        """Show a Yes/No modal summarising what would be merged; on Yes dispatch with --yes."""
+        from pm_shell.sync.diff import compute_changes
+        from pm_shell.tui.confirm_screen import ConfirmScreen
+
+        log = self.query_one("#log", RichLog)
+        changes = compute_changes()
+        if not changes:
+            log.write(Text.from_markup("[dim]workspace is clean — nothing to merge[/dim]"))
+            return
+
+        body = self._merge_summary_text(changes)
+
+        def on_decision(confirmed: Optional[bool]) -> None:
+            if not confirmed:
+                log.write(Text.from_markup("[yellow]merge cancelled[/yellow]"))
+                return
+            argv = ["merge", "--yes", *extra_args]
+            log.write(Text.from_markup(f"[dim]running merge…[/dim]"))
+            self._dispatch(argv, log)
+            self._suggester.refresh()
+            self._refresh_context()
+
+        self.push_screen(ConfirmScreen(
+            "Push these changes to Jira?", body,
+            confirm_label="Merge", cancel_label="Cancel",
+        ), on_decision)
+
+    def _merge_summary_text(self, changes) -> Text:
+        from collections import Counter
+        kinds = Counter(c.kind for c in changes)
+        counts_line = ", ".join(f"[{_KIND_COLOR[k]}]{n} {k}[/]" for k, n in kinds.items())
+        body = Text.from_markup(
+            f"{len(changes)} change(s):  {counts_line}\n\n"
+            f"[dim]This will create/update/delete real Jira issues. There is no\n"
+            f"undo — but you can re-clone to refresh from Jira.[/dim]"
+        )
+        return body
+
     # ── Actions ──────────────────────────────────────────────────────────────
     def action_clear_log(self) -> None:
         self.query_one("#log", RichLog).clear()
@@ -320,63 +364,85 @@ class PMShell(App):
 _HELP_TEXT = Text.from_markup("""\
 [bold]BROWSE[/]
   [dim]ls[/]                              what's at the current location
-  [dim]tree[/]                            the whole workspace tree
-  [dim]tree KAN-4[/]                      tree scoped to one epic
+  [dim]tree [KEY|path][/]                 the workspace tree (full or scoped)
   [dim]show[/]                            smart card for the current epic/story
 
 [bold]NAVIGATE[/]   [italic dim]cd is key-aware — keys are unique IDs, no slug needed[/]
   [dim]cd KAN-4[/]                        into an epic
-  [dim]cd KAN-5[/]                        into a story (works from anywhere)
-  [dim]cd ..[/]                           up one level
-  [dim]cd[/]                              back to workspace root
+  [dim]cd KAN-5[/]                        into a story (resolves globally)
+  [dim]cd ..[/]                           up one level (refuses to leave .jira)
+  [dim]cd[/]                              workspace root
 
 [bold]VIEW[/]
-  [cyan]epic show KAN-4[/]                 epic card + story list
-  [magenta]story show KAN-5[/]                story card + tasks + latest comment
-  [green]task list KAN-5[/]                 task table (or [green]task list[/] inside a story dir)
-  [yellow]comment list KAN-5[/]              all comments
+  [cyan]epic show[/] [dim][KEY][/]                  epic card + story list
+  [cyan]epic list[/]                       table of all epics
+  [magenta]story show[/] [dim][KEY][/]                 story card + tasks + latest comment
+  [magenta]story list[/] [dim][--epic KEY][/]         story table (filtered by epic if given)
+  [green]task list[/] [dim][STORY][/]                task table for a story
+  [yellow]comment list[/] [dim][STORY][/]             all comments
+  [yellow]comment last[/] [dim][STORY][/]             most recent comment only
 
-[bold]EDIT[/]   [italic dim]all changes are local — push (Phase 6) syncs them to Jira[/]
-  [magenta]story set KAN-5 --status in-progress --priority high[/]
-  [magenta]set --status done[/]                inside a story dir, cwd-inferred
-  [cyan]epic set KAN-4 --priority critical --label backend[/]
-  [magenta]start[/] [dim]/[/] [magenta]done[/] [dim]/[/] [magenta]block "reason"[/]      shortcuts (in story dir)
-  [dim]edit[/]                            $EDITOR on current epic/story description
+[bold]EDIT[/]   [italic dim]all changes stay local — push (Phase 6) syncs them to Jira[/]
+
+  [cyan]epic set[/] [dim][KEY][/]                   update fields on an epic
+    [dim]--summary[/]      title
+    [dim]--status[/]       todo | in-progress | done | blocked
+    [dim]--priority[/]     low | medium | high | critical
+    [dim]--owner[/]        user email (pass "" to clear)
+    [dim]--label[/]        add a label (repeatable)
+    [dim]--description[/]  inline (use `edit` for multi-line)
+
+  [magenta]story set[/] [dim][KEY][/]                  update fields on a story
+    [dim]--summary[/]      title
+    [dim]--status[/]       todo | in-progress | done | blocked
+    [dim]--priority[/]     low | medium | high | critical
+    [dim]--assignee[/]     user email (pass "" to clear)
+    [dim]--label[/]        add a label (repeatable)
+    [dim]--description[/]  inline (use `edit` for multi-line)
+    [dim]--epic[/]         reparent to a different epic key
+    [dim]--points[/]       story points (integer)
+
+  [magenta]start[/] [dim]/[/] [magenta]done[/] [dim]/[/] [magenta]block "reason"[/]   story status shortcuts (cwd-inferred)
+  [dim]edit[/]                            open the current item's description in $EDITOR
 
 [bold]TASKS[/]   [italic dim]task IDs are 1-indexed per story[/]
   [green]task add "Wire OAuth callback"[/]
-  [green]task done 2[/]                     mark #2 complete  ([green]task undone 2[/] reopens)
+  [green]task done 2[/]                     mark #2 complete   ([green]task undone 2[/] reopens)
   [green]task edit 2 "New title"[/]
-  [green]task delete 2[/]
+  [green]task delete 2[/]                   removed immediately
 
 [bold]COMMENTS[/]
-  [yellow]comment add "Picked this back up"[/]    inline
-  [yellow]comment add[/]                          opens $EDITOR
+  [yellow]comment add "..."[/]                inline append
+  [yellow]comment add[/]                      opens $EDITOR
 
-[bold]CREATE[/]   [italic dim]scaffolds locally with NEW-N key — `push` (Phase 6) creates the real Jira issue[/]
-  [cyan]epic create "Auth overhaul" --priority high --label security[/]
-  [magenta]story create "SSO integration" --epic KAN-4 --priority high[/]
-  [magenta]story create "Welcome screen"[/]            auto-links to epic when run inside one
-  [green]task add "Wire OAuth callback"[/]      add a sub-task to the current story
+[bold]CREATE[/]   [italic dim]scaffolds with a NEW-N placeholder key — push creates the real Jira issue[/]
 
-[bold]DELETE[/]   [italic dim]soft-marks with `_deleted: true` — `push` removes from Jira; NEW-* items are removed immediately[/]
-  [cyan]epic delete KAN-4[/]                  cascades to child stories
-  [magenta]story delete KAN-5[/]
-  [green]task delete 2[/]                       removed immediately (sub-task issue deleted on push)
-  [dim]epic undelete KAN-4[/]                clear the deletion mark
-  [dim]story undelete KAN-5[/]
+  [cyan]epic create "Summary"[/]              accepts: [dim]--priority --owner --label --description[/]
+  [magenta]story create "Summary"[/]             accepts: [dim]--epic --priority --assignee --label \
+--description --points[/]
+                                  (auto-links to current epic when run inside one)
+
+[bold]DELETE[/]   [italic dim]soft-marks `_deleted: true` — push removes from Jira; NEW-* items are removed immediately[/]
+  [cyan]epic delete[/] [dim][KEY][/]                cascades to child stories
+  [magenta]story delete[/] [dim][KEY][/]
+  [green]task delete N[/]                    immediate (sub-task issue deleted on push)
+  [dim]epic undelete / story undelete[/]   clear the deletion mark (epic cascades)
 
 [bold]SYNC[/]
   [yellow]status[/]                          summary of all dirty items (created/modified/deleted)
-  [yellow]diff[/]                            opens a viewer (Esc to return); pick files with ↑/↓
+  [yellow]diff[/]                            opens the diff viewer (Esc to return)
   [yellow]diff KAN-5[/]                      inline diff for one item
-  [dim]push[/] [dim]/[/] [dim]pull[/]                      sync with Jira (Phase 6/7)
+
+  [yellow]merge[/]                           push local changes to Jira (Yes/No modal first)
+    [dim]--yes[/] / [dim]-y[/]                 skip the confirmation
+    [dim]--dry-run[/]                  preview the API calls without contacting Jira
+  [dim]pull[/]                            sync from Jira (Phase 7 — not yet)
 
 [bold]SHELL[/]
-  ↑[dim]/[/]↓        command history          →     accept ghost suggestion
-  PgUp[dim]/[/]PgDn  scroll output            wheel scroll output (mouse)
+  ↑[dim]/[/]↓        command history          →[dim]/[/]Tab  accept ghost suggestion
+  PgUp[dim]/[/]PgDn  scroll output            wheel    scroll output (mouse)
   Ctrl-L     clear screen             Ctrl-D[dim]/[/]exit  quit
-  [dim]Append --help to any command for flag details.[/]""")
+  [dim]Append --help to any command for the full flag list.[/]""")
 
 
 def _project_from_url(base_url: str) -> str:

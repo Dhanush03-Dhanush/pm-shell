@@ -151,6 +151,7 @@ def clone(
 
     config.status_map = {k: v for k, v in status_map.items() if v}
     config.last_pull_at = datetime.now(timezone.utc).isoformat()
+    config.project_key = project_key
     save_config(config)
 
     return {

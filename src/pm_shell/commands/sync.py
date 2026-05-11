@@ -13,8 +13,10 @@ from rich.rule import Rule
 from rich.table import Table
 from rich.text import Text
 
-from pm_shell.io import console
+from pm_shell.config import load_config
+from pm_shell.io import console, err_console
 from pm_shell.sync.diff import Change, compute_changes, format_diff_text
+from pm_shell.sync.push import PushError, PushOutcome, merge as run_merge
 
 _KIND_STYLE = {
     "created": ("green", "+"),
@@ -46,6 +48,38 @@ def status() -> None:
     console.print(table)
     console.print()
     _print_summary_line(changes)
+
+
+def merge(
+    yes: Annotated[
+        bool,
+        typer.Option("--yes", "-y", help="Skip the confirmation prompt."),
+    ] = False,
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="Preview the API calls without contacting Jira."),
+    ] = False,
+) -> None:
+    """Push local changes to Jira. Asks for confirmation first."""
+    changes = compute_changes()
+    if not changes:
+        console.print("[dim]workspace is clean — nothing to merge[/dim]")
+        return
+
+    _print_merge_preview(changes, dry_run=dry_run)
+    if not yes and not dry_run:
+        if not typer.confirm("Apply these changes to Jira?", default=False):
+            console.print("[yellow]cancelled[/yellow]")
+            raise typer.Exit(code=1)
+
+    try:
+        cfg = load_config()
+        outcome = run_merge(cfg, dry_run=dry_run, progress=lambda msg: console.print(f"[dim]{msg}[/dim]"))
+    except PushError as exc:
+        err_console.print(f"[red]merge halted:[/] {exc}")
+        raise typer.Exit(code=1) from None
+
+    _print_outcome(outcome)
 
 
 def diff(
@@ -106,3 +140,35 @@ def _header_for(c: Change) -> Rule:
     color, _ = _KIND_STYLE.get(c.kind, ("white", "?"))
     title = f"[{color}]{c.kind}[/]  [bold]{c.file_label}[/]  [dim]{c.summary}[/]"
     return Rule(title=title, characters="─", style=color)
+
+
+def _print_merge_preview(changes: list[Change], *, dry_run: bool) -> None:
+    by_kind: dict[str, int] = {}
+    for c in changes:
+        by_kind[c.kind] = by_kind.get(c.kind, 0) + 1
+    parts = []
+    for kind, n in by_kind.items():
+        color, _ = _KIND_STYLE.get(kind, ("white", ""))
+        parts.append(f"[{color}]{n} {kind}[/]")
+    prefix = "[bold yellow]Dry run:[/] would merge" if dry_run else "[bold]Merge:[/]"
+    console.print(f"{prefix} {len(changes)} change(s) — " + ", ".join(parts))
+
+
+def _print_outcome(outcome: PushOutcome) -> None:
+    for line in outcome.successes:
+        console.print(f"  [green]✓[/] {line}")
+    for warn in outcome.warnings:
+        console.print(f"  [yellow]![/] {warn}")
+    for label, err in outcome.failures:
+        console.print(f"  [red]✗[/] [bold]{label}:[/] {err}")
+
+    console.print()
+    if outcome.dry_run:
+        console.print(f"[dim]dry run complete — no changes made.[/dim]")
+    elif outcome.failures:
+        console.print(
+            f"[yellow]merge finished with {len(outcome.failures)} failure(s);[/] "
+            f"see [dim].jira/.log/push-*.json[/dim]"
+        )
+    else:
+        console.print(f"[green]merge complete — {len(outcome.successes)} operation(s) applied.[/green]")

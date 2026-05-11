@@ -71,6 +71,10 @@ def story_shape(
         "assignee": user_record(fields.get("assignee")),
         "labels": fields.get("labels") or [],
         "epic": epic_key,
+        # Story Points is a custom field in Jira Cloud; `customfield_10016` is the
+        # default ID in the standard scrum/kanban templates. If the tenant uses a
+        # different field, this stays None until push (Phase 6) resolves the mapping.
+        "points": fields.get("customfield_10016"),
         "description": fields.get("description"),
         "created": fields.get("created"),
         "updated": fields.get("updated"),

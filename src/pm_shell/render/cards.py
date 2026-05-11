@@ -71,11 +71,13 @@ def story_card(
     done = sum(1 for t in tasks if t.get("done"))
     tasks_summary = f"{done}/{len(tasks)} done" if tasks else "no tasks"
 
+    points = story.get("points")
     rows = [
         ("Status", style_status(story.get("status"), story.get("statusJira"))),
         ("Priority", style_priority(story.get("priority"))),
         ("Assignee", user_label(story.get("assignee"))),
         ("Epic", story.get("epic") or "[dim]—[/dim]"),
+        ("Points", str(points) if points is not None else "[dim]—[/dim]"),
         ("Labels", ", ".join(story.get("labels") or []) or "[dim]—[/dim]"),
         ("Tasks", tasks_summary),
         ("Created", story.get("created") or "—"),
