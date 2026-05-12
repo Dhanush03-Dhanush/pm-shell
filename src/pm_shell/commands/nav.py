@@ -11,7 +11,6 @@ from pm_shell.io import console, err_console
 from pm_shell.render.cards import epic_card, story_card
 from pm_shell.render.styles import style_priority, style_status, user_label
 from pm_shell.render.tables import epic_table, story_table, task_table
-from pm_shell.workspace.io import read_json
 from pm_shell.workspace.paths import (
     parse_key_from_dirname,
     resolve_context,

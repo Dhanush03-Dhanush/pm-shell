@@ -80,9 +80,13 @@ class PMShell(App):
     CSS_PATH = "styles.tcss"
     TITLE = "pm-shell"
 
+    # Disable Textual's built-in command palette (Ctrl+P / theme picker /
+    # save-screenshot menu). pm-shell has its own command surface; we don't
+    # want the palette page or its footer hint showing up.
+    ENABLE_COMMAND_PALETTE = False
+
     BINDINGS = [
         Binding("ctrl+d", "quit", "quit", show=True),
-        Binding("ctrl+l", "clear_log", "clear", show=True),
         Binding("pageup", "scroll_log_up", "scroll", show=True),
         Binding("pagedown", "scroll_log_down", "", show=False),
         # No priority — keep ↑/↓ history at the bottom of the chain so widgets
@@ -93,6 +97,9 @@ class PMShell(App):
 
     def __init__(self, typer_app: "typer.Typer") -> None:
         super().__init__()
+        # Lock the theme to ansi-dark so colors come from the user's terminal
+        # palette and stay consistent regardless of Textual version defaults.
+        self.theme = "ansi-dark"
         self._typer_app = typer_app
         self._suggester = PMSuggester(typer_app)
         self._history: list[str] = []
@@ -328,9 +335,6 @@ class PMShell(App):
         return body
 
     # ── Actions ──────────────────────────────────────────────────────────────
-    def action_clear_log(self) -> None:
-        self.query_one("#log", RichLog).clear()
-
     def action_scroll_log_up(self) -> None:
         self.query_one("#log", RichLog).scroll_page_up(animate=False)
 
@@ -441,7 +445,7 @@ _HELP_TEXT = Text.from_markup("""\
 [bold]SHELL[/]
   ↑[dim]/[/]↓        command history          →[dim]/[/]Tab  accept ghost suggestion
   PgUp[dim]/[/]PgDn  scroll output            wheel    scroll output (mouse)
-  Ctrl-L     clear screen             Ctrl-D[dim]/[/]exit  quit
+  Ctrl-D[dim]/[/]exit  quit              [dim]`clear` empties the output log[/]
   [dim]Append --help to any command for the full flag list.[/]""")
 
 

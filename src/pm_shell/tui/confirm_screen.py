@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Callable, Optional
-
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
