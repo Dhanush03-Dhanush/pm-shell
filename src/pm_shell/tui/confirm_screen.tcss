@@ -1,0 +1,36 @@
+/* Yes/No modal. Sits in the middle of the screen with a dim backdrop. */
+
+ConfirmScreen {
+    align: center middle;
+    background: $background 70%;
+}
+
+#confirm-box {
+    width: 70;
+    max-width: 90%;
+    padding: 1 2;
+    border: round $warning;
+    background: $background;
+    height: auto;
+}
+
+#confirm-title {
+    height: 1;
+    padding: 0 0 1 0;
+    color: $warning;
+    text-style: bold;
+}
+
+#confirm-body {
+    height: auto;
+    padding: 0 0 1 0;
+}
+
+#confirm-buttons {
+    height: auto;
+    padding-top: 1;
+}
+
+#confirm-buttons Button {
+    margin: 0 1;
+}

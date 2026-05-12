@@ -24,8 +24,10 @@ class Config(BaseModel):
     email: str = Field(alias="email")
     api_token: str = Field(alias="apiToken")
     board_id: Optional[int] = Field(default=None, alias="boardId")
+    project_key: Optional[str] = Field(default=None, alias="projectKey")
     last_pull_at: Optional[str] = Field(default=None, alias="lastPullAt")
     status_map: dict[str, str] = Field(default_factory=dict, alias="statusMap")
+    next_local_id: int = Field(default=1, alias="nextLocalId")
 
 
 def find_workspace_root(start: Optional[Path] = None) -> Path:

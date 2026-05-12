@@ -4,7 +4,6 @@ import re
 from typing import Annotated, Optional
 
 import typer
-from rich.console import Console
 
 from pm_shell.commands._context import resolve_story_key
 from pm_shell.commands._editor import open_editor
@@ -14,12 +13,11 @@ from pm_shell.commands._mutate import (
     renumber_tasks,
 )
 from pm_shell.config import load_config
+from pm_shell.io import console, err_console
 from pm_shell.render.tables import task_table
 from pm_shell.workspace.tree import WorkspaceMissingError, load_tasks
 
 app = typer.Typer(help="Task (sub-task) operations.", no_args_is_help=True)
-console = Console()
-err_console = Console(stderr=True)
 
 _KEY_RE = re.compile(r"^[A-Z][A-Z0-9]*-\d+$")
 
@@ -83,6 +81,8 @@ def task_add(
     if not title.strip():
         raise typer.BadParameter("Task title cannot be empty.")
 
+    cfg = load_config()
+
     def add(tasks: list[dict]) -> None:
         next_id = (max((t["id"] for t in tasks), default=0)) + 1
         tasks.append({
@@ -91,7 +91,7 @@ def task_add(
             "title": title.strip(),
             "done": False,
             "status": "todo",
-            "statusJira": None,
+            "statusJira": cfg.status_map.get("todo"),
             "assignee": None,
             "_unpushed": True,
         })
@@ -101,7 +101,7 @@ def task_add(
     except WorkspaceMissingError as exc:
         err_console.print(f"[red]{exc}[/]")
         raise typer.Exit(code=1) from None
-    console.print(f"[green]+[/] {story_key}: {title!r}")
+    console.print(f"[green]+[/] {story_key}: {title.strip()!r}  [dim](unpushed)[/]")
 
 
 def _flip(story_key: str, task_id: int, *, done_value: bool) -> None:

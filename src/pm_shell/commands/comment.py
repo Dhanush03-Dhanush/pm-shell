@@ -4,17 +4,15 @@ import re
 from typing import Annotated, Optional
 
 import typer
-from rich.console import Console
 
 from pm_shell.commands._context import resolve_story_key
 from pm_shell.commands._editor import open_editor
 from pm_shell.commands._mutate import append_comment
+from pm_shell.io import console, err_console
 from pm_shell.render.comments import comment_panel, render_comment_list
 from pm_shell.workspace.tree import WorkspaceMissingError, load_comments
 
 app = typer.Typer(help="Comment operations.", no_args_is_help=True)
-console = Console()
-err_console = Console(stderr=True)
 
 
 @app.command("list")

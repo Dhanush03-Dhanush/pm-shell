@@ -8,6 +8,7 @@ from typing import Optional
 from pm_shell.config import workspace_dir
 
 _SLUG_STRIP_RE = re.compile(r"[^a-z0-9]+")
+KEY_RE = re.compile(r"^[A-Z][A-Z0-9]*-\d+$")
 
 
 def slugify(text: str, *, max_length: int = 60) -> str:
@@ -74,6 +75,47 @@ def find_story_dir(key: str) -> Optional[Path]:
             if story_dir.is_dir() and parse_key_from_dirname(story_dir.name) == key:
                 return story_dir
     return None
+
+
+def navigable_keys() -> list[str]:
+    """Sorted list of epic + story keys (anything that has an on-disk directory).
+
+    Sub-tasks are excluded — they don't have their own directory, just an entry in tasks.json.
+    Used to power Tab completion for cd/ls/tree.
+    """
+    keys: list[str] = []
+    root = epics_dir()
+    if root.exists():
+        for epic in root.iterdir():
+            if not epic.is_dir():
+                continue
+            ek = parse_key_from_dirname(epic.name)
+            if ek:
+                keys.append(ek)
+            for story in epic.iterdir():
+                if story.is_dir():
+                    sk = parse_key_from_dirname(story.name)
+                    if sk:
+                        keys.append(sk)
+    orphans = unparented_dir()
+    if orphans.exists():
+        for story in orphans.iterdir():
+            if story.is_dir():
+                sk = parse_key_from_dirname(story.name)
+                if sk:
+                    keys.append(sk)
+    return sorted(keys)
+
+
+def resolve_workspace_target(arg: str) -> Optional[Path]:
+    """If `arg` is a Jira key with a matching dir in the workspace, return that dir.
+
+    Returns None if `arg` doesn't look like a key or no matching dir exists.
+    Callers should fall back to treating `arg` as a regular filesystem path.
+    """
+    if not KEY_RE.match(arg):
+        return None
+    return find_epic_dir(arg) or find_story_dir(arg)
 
 
 def resolve_context(start: Optional[Path] = None) -> tuple[Optional[str], Optional[str]]:

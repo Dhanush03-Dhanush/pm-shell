@@ -1,0 +1,57 @@
+/* Claude Code-style chat layout: single column, minimal chrome, output above, prompt below. */
+
+/* Hide scrollbars everywhere — content still scrolls via wheel / PgUp / PgDn,
+   just without the visible track. Set on Screen so every widget inherits. */
+Screen {
+    background: $background;
+    layout: vertical;
+    scrollbar-size: 0 0;
+}
+
+#banner {
+    height: 1;
+    padding: 0 1;
+    background: $background;
+    color: $text-muted;
+}
+
+#log {
+    height: 1fr;
+    padding: 0 1;
+    background: $background;
+    scrollbar-size: 0 0;
+}
+
+#prompt-row {
+    height: 3;
+    padding: 0 1;
+    layout: horizontal;
+}
+
+#prompt-context {
+    width: auto;
+    min-width: 4;
+    height: 3;
+    padding: 1 1 0 0;
+    color: $primary;
+    content-align: left middle;
+}
+
+#prompt {
+    height: 3;
+    border: round $primary-darken-2;
+    background: $background;
+    background-tint: $background 0%;
+}
+
+#prompt:focus {
+    /* keep everything identical when focused — no border swap, no tint overlay */
+    border: round $primary-darken-2;
+    background: $background;
+    background-tint: $background 0%;
+}
+
+Footer {
+    background: $background;
+    color: $text-muted;
+}

@@ -4,17 +4,17 @@ from pathlib import Path
 from typing import Annotated, Optional
 
 import typer
-from rich.console import Console
 from rich.tree import Tree
 
 from pm_shell.config import workspace_dir
+from pm_shell.io import console, err_console
 from pm_shell.render.cards import epic_card, story_card
 from pm_shell.render.styles import style_priority, style_status, user_label
 from pm_shell.render.tables import epic_table, story_table, task_table
-from pm_shell.workspace.io import read_json
 from pm_shell.workspace.paths import (
     parse_key_from_dirname,
     resolve_context,
+    resolve_workspace_target,
 )
 from pm_shell.workspace.tree import (
     list_epics,
@@ -25,9 +25,6 @@ from pm_shell.workspace.tree import (
     load_tasks,
     stories_for_epic,
 )
-
-console = Console()
-err_console = Console(stderr=True)
 
 
 def _classify(path: Path) -> tuple[str, Optional[str], Optional[str]]:
@@ -60,19 +57,33 @@ def _classify(path: Path) -> tuple[str, Optional[str], Optional[str]]:
     return ("outside", None, None)
 
 
+def _resolve_target(arg: Optional[str]) -> tuple[Path, bool]:
+    """Resolve a CLI target into (path, was_explicit). Accepts a Jira key or a path.
+
+    `was_explicit` is True when the user supplied an argument (so we error on missing dirs
+    instead of falling back to the workspace root).
+    """
+    if arg is None:
+        return Path.cwd().resolve(), False
+    resolved = resolve_workspace_target(arg)
+    if resolved is not None:
+        return resolved.resolve(), True
+    return Path(arg).expanduser().resolve(), True
+
+
 def ls(
-    path: Annotated[
-        Optional[Path],
-        typer.Argument(help="Optional path inside the .jira workspace. Defaults to cwd."),
+    target: Annotated[
+        Optional[str],
+        typer.Argument(help="Path or Jira key (e.g. KAN-4). Defaults to cwd."),
     ] = None,
 ) -> None:
     """List contents of the current (or given) workspace directory with inline metadata."""
-    target = (path or Path.cwd()).resolve()
-    kind, epic_key, story_key = _classify(target)
+    resolved, explicit = _resolve_target(target)
+    kind, epic_key, story_key = _classify(resolved)
 
     if kind == "outside":
-        if path is not None:
-            err_console.print(f"[red]{target} is outside the .jira workspace.[/]")
+        if explicit:
+            err_console.print(f"[red]{resolved} is outside the .jira workspace.[/]")
             raise typer.Exit(code=1)
         kind = "workspace"  # default fallback when invoked from outside
 
@@ -136,46 +147,69 @@ def ls(
         return
 
 
+def _epic_tree_node(root: Tree, epic: dict) -> None:
+    node = root.add(
+        f"[cyan]{epic['key']}[/]  {epic.get('summary', '')}  "
+        f"{style_status(epic.get('status'), epic.get('statusJira'))}  "
+        f"{style_priority(epic.get('priority'))}"
+    )
+    for s in stories_for_epic(epic["key"]):
+        _story_tree_node(node, s)
+
+
+def _story_tree_node(parent: Tree, story: dict) -> None:
+    tasks = load_tasks(story["key"])
+    done = sum(1 for t in tasks if t.get("done"))
+    node = parent.add(
+        f"[magenta]{story['key']}[/]  {story.get('summary', '')}  "
+        f"{style_status(story.get('status'), story.get('statusJira'))}  "
+        f"[dim]{done}/{len(tasks)}[/]"
+    )
+    for t in tasks:
+        check = "[green]✓[/]" if t.get("done") else "[dim]·[/]"
+        key_label = t.get("key") or "[dim](new)[/]"
+        node.add(f"{check} [green]{key_label}[/]  {t.get('title', '')}")
+
+
 def tree(
-    path: Annotated[
-        Optional[Path],
-        typer.Argument(help="Optional path inside the .jira workspace. Defaults to cwd."),
+    target: Annotated[
+        Optional[str],
+        typer.Argument(help="Path or Jira key (e.g. KAN-4). Defaults to cwd."),
     ] = None,
 ) -> None:
-    """Recursive annotated tree from cwd (or a given workspace path)."""
-    target = (path or Path.cwd()).resolve()
-    kind, _, _ = _classify(target)
-    if kind == "outside" and path is not None:
-        err_console.print(f"[red]{target} is outside the .jira workspace.[/]")
+    """Recursive annotated tree from cwd (or a given workspace path/key)."""
+    resolved, explicit = _resolve_target(target)
+    kind, epic_key, story_key = _classify(resolved)
+    if kind == "outside" and explicit:
+        err_console.print(f"[red]{resolved} is outside the .jira workspace.[/]")
         raise typer.Exit(code=1)
+
+    if kind == "story" and story_key:
+        story = load_story(story_key)
+        root = Tree(f"[bold magenta]{story['key']}[/]  {story.get('summary', '')}")
+        tasks = load_tasks(story_key)
+        for t in tasks:
+            check = "[green]✓[/]" if t.get("done") else "[dim]·[/]"
+            key_label = t.get("key") or "[dim](new)[/]"
+            root.add(f"{check} [green]{key_label}[/]  {t.get('title', '')}")
+        console.print(root)
+        return
+
+    if kind == "epic" and epic_key:
+        epic = load_epic(epic_key)
+        root = Tree(f"[bold cyan]{epic['key']}[/]  {epic.get('summary', '')}")
+        for s in stories_for_epic(epic_key):
+            _story_tree_node(root, s)
+        console.print(root)
+        return
 
     epics = list_epics()
     if not epics:
         console.print("[dim]workspace is empty[/dim]")
         return
-
-    root_label = ".jira/epics/"
-    root = Tree(f"[bold]{root_label}[/]")
+    root = Tree("[bold].jira/epics/[/]")
     for e in epics:
-        ekey = e["key"]
-        epic_node = root.add(
-            f"[cyan]{ekey}[/]  {e.get('summary', '')}  "
-            f"{style_status(e.get('status'), e.get('statusJira'))}  "
-            f"{style_priority(e.get('priority'))}"
-        )
-        for s in stories_for_epic(ekey):
-            tasks = load_tasks(s["key"])
-            done = sum(1 for t in tasks if t.get("done"))
-            story_node = epic_node.add(
-                f"[magenta]{s['key']}[/]  {s.get('summary', '')}  "
-                f"{style_status(s.get('status'), s.get('statusJira'))}  "
-                f"[dim]{done}/{len(tasks)}[/]"
-            )
-            for t in tasks:
-                check = "[green]✓[/]" if t.get("done") else "[dim]·[/]"
-                story_node.add(
-                    f"{check} [dim]{t.get('key', '')}[/]  {t.get('title', '')}"
-                )
+        _epic_tree_node(root, e)
     console.print(root)
 
 

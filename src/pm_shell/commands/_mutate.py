@@ -20,6 +20,19 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def next_local_key(cfg: Config) -> str:
+    """Reserve and return the next `NEW-<n>` placeholder key.
+
+    Increments and persists `cfg.next_local_id`. Push (Phase 6) replaces these
+    with real Jira keys after the issue is created server-side.
+    """
+    from pm_shell.config import save_config
+    n = cfg.next_local_id
+    cfg.next_local_id = n + 1
+    save_config(cfg)
+    return f"NEW-{n}"
+
+
 def jira_status_for(canonical: str, cfg: Config) -> str:
     """Translate canonical status → Jira display name via config.statusMap.
 

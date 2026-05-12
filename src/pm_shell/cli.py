@@ -4,9 +4,14 @@ from pathlib import Path
 from typing import Annotated, Optional
 
 import typer
-from rich.console import Console
 
 from pm_shell import __version__
+from pm_shell.commands import comment as comment_cmd
+from pm_shell.commands import epic as epic_cmd
+from pm_shell.commands import nav
+from pm_shell.commands import story as story_cmd
+from pm_shell.commands import sync as sync_cmd
+from pm_shell.commands import task as task_cmd
 from pm_shell.config import (
     ConfigNotFoundError,
     config_path,
@@ -14,18 +19,13 @@ from pm_shell.config import (
     save_config,
     secrets_to_config,
 )
-from pm_shell.commands import comment as comment_cmd
-from pm_shell.commands import epic as epic_cmd
-from pm_shell.commands import nav
-from pm_shell.commands import story as story_cmd
-from pm_shell.commands import task as task_cmd
+from pm_shell.io import console, err_console
 from pm_shell.jira.client import JiraClient, JiraHTTPError
 from pm_shell.sync.clone import DirtyWorkspaceError, clone
 
 app = typer.Typer(
     name="pm",
     help="A git-like shell for Jira boards. Clone once, edit locally, push when ready.",
-    no_args_is_help=True,
     add_completion=False,
 )
 config_app = typer.Typer(help="Manage local pm-shell configuration.", no_args_is_help=True)
@@ -37,10 +37,63 @@ app.add_typer(comment_cmd.app, name="comment")
 app.command("ls")(nav.ls)
 app.command("tree")(nav.tree)
 app.command("show")(nav.show)
+app.command("status", help="Show all locally modified, added, or deleted items.")(sync_cmd.status)
+app.command("diff", help="Print unified diffs for changed files.")(sync_cmd.diff)
+app.command("merge", help="Push local changes to Jira (confirmation prompt).")(sync_cmd.merge)
 app.command("start", help="Shorthand for `story start` (cwd-inferred).")(story_cmd.story_start)
 app.command("done", help="Shorthand for `story done` (cwd-inferred).")(story_cmd.story_done)
 app.command("block", help="Shorthand for `story block` (cwd-inferred).")(story_cmd.story_block)
-app.command("set", help="Shorthand for `story set` (cwd-inferred).")(story_cmd.story_set)
+
+
+@app.command("set")
+def smart_set(
+    status: Annotated[Optional[str], typer.Option("--status", help="todo | in-progress | done | blocked.")] = None,
+    priority: Annotated[Optional[str], typer.Option("--priority", help="low | medium | high | critical.")] = None,
+    summary: Annotated[Optional[str], typer.Option("--summary", help="New title.")] = None,
+    label: Annotated[Optional[list[str]], typer.Option("--label", help="Add a label. Repeatable.")] = None,
+    description: Annotated[Optional[str], typer.Option("--description", help="Inline description.")] = None,
+    owner: Annotated[Optional[str], typer.Option("--owner", help="Epic owner email. Pass '' to clear.")] = None,
+    assignee: Annotated[Optional[str], typer.Option("--assignee", help="Story assignee email. Pass '' to clear.")] = None,
+    epic: Annotated[Optional[str], typer.Option("--epic", help="Reparent story to a different epic.")] = None,
+    points: Annotated[Optional[int], typer.Option("--points", help="Story points (integer).")] = None,
+) -> None:
+    """Update fields on the current epic or story (cwd-inferred).
+
+    Routes to `epic set` when cwd is inside an epic dir (no story), to `story set`
+    when inside a story dir. Flags that don't apply to the current item type are
+    ignored with a warning so the same muscle memory works for both.
+    """
+    from pm_shell.workspace.paths import resolve_context
+
+    epic_key, story_key = resolve_context()
+    if story_key:
+        if owner is not None:
+            err_console.print("[dim]--owner is epic-only; ignored on a story[/]")
+        story_cmd.story_set(
+            key=story_key,
+            status=status, priority=priority, summary=summary,
+            assignee=assignee, label=label, description=description,
+            epic=epic, points=points,
+        )
+        return
+
+    if epic_key:
+        story_only = {"--assignee": assignee, "--epic": epic, "--points": points}
+        ignored = [name for name, val in story_only.items() if val is not None]
+        if ignored:
+            err_console.print(f"[dim]{', '.join(ignored)} are story-only; ignored on an epic[/]")
+        epic_cmd.epic_set(
+            key=epic_key,
+            status=status, priority=priority, summary=summary,
+            owner=owner, label=label, description=description,
+        )
+        return
+
+    err_console.print(
+        "[yellow]No context.[/] cd into an epic or story directory, "
+        "or use `pm epic set KEY ...` / `pm story set KEY ...` explicitly."
+    )
+    raise typer.Exit(code=1)
 
 
 @app.command("edit")
@@ -60,9 +113,6 @@ def smart_edit() -> None:
     )
     raise typer.Exit(code=1)
 
-console = Console()
-err_console = Console(stderr=True)
-
 
 def _version_callback(value: bool) -> None:
     if value:
@@ -70,14 +120,39 @@ def _version_callback(value: bool) -> None:
         raise typer.Exit()
 
 
-@app.callback()
+@app.callback(invoke_without_command=True)
 def main(
+    ctx: typer.Context,
     version: Annotated[
         Optional[bool],
         typer.Option("--version", callback=_version_callback, is_eager=True, help="Show version and exit."),
     ] = None,
 ) -> None:
-    """pm — interact with a local Jira mirror."""
+    """pm — interact with a local Jira mirror. With no subcommand, opens the Textual shell."""
+    if ctx.invoked_subcommand is None:
+        _launch_shell()
+
+
+@app.command("shell", help="Open the interactive pm-shell (Textual TUI).")
+def cmd_shell(
+    simple: Annotated[
+        bool,
+        typer.Option("--simple", help="Use the lightweight prompt_toolkit REPL instead of the TUI."),
+    ] = False,
+) -> None:
+    _launch_shell(simple=simple)
+
+
+def _launch_shell(*, simple: bool = False) -> None:
+    """Open either the Textual TUI (default) or the prompt_toolkit REPL (--simple / non-TTY)."""
+    import sys
+
+    use_tui = not simple and sys.stdin.isatty() and sys.stdout.isatty()
+    if use_tui:
+        from pm_shell.tui import run_tui
+        raise typer.Exit(code=run_tui(app))
+    from pm_shell.shell.repl import run_repl
+    raise typer.Exit(code=run_repl(app))
 
 
 @config_app.command("init")
