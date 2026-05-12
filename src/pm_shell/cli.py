@@ -43,7 +43,57 @@ app.command("merge", help="Push local changes to Jira (confirmation prompt).")(s
 app.command("start", help="Shorthand for `story start` (cwd-inferred).")(story_cmd.story_start)
 app.command("done", help="Shorthand for `story done` (cwd-inferred).")(story_cmd.story_done)
 app.command("block", help="Shorthand for `story block` (cwd-inferred).")(story_cmd.story_block)
-app.command("set", help="Shorthand for `story set` (cwd-inferred).")(story_cmd.story_set)
+
+
+@app.command("set")
+def smart_set(
+    status: Annotated[Optional[str], typer.Option("--status", help="todo | in-progress | done | blocked.")] = None,
+    priority: Annotated[Optional[str], typer.Option("--priority", help="low | medium | high | critical.")] = None,
+    summary: Annotated[Optional[str], typer.Option("--summary", help="New title.")] = None,
+    label: Annotated[Optional[list[str]], typer.Option("--label", help="Add a label. Repeatable.")] = None,
+    description: Annotated[Optional[str], typer.Option("--description", help="Inline description.")] = None,
+    owner: Annotated[Optional[str], typer.Option("--owner", help="Epic owner email. Pass '' to clear.")] = None,
+    assignee: Annotated[Optional[str], typer.Option("--assignee", help="Story assignee email. Pass '' to clear.")] = None,
+    epic: Annotated[Optional[str], typer.Option("--epic", help="Reparent story to a different epic.")] = None,
+    points: Annotated[Optional[int], typer.Option("--points", help="Story points (integer).")] = None,
+) -> None:
+    """Update fields on the current epic or story (cwd-inferred).
+
+    Routes to `epic set` when cwd is inside an epic dir (no story), to `story set`
+    when inside a story dir. Flags that don't apply to the current item type are
+    ignored with a warning so the same muscle memory works for both.
+    """
+    from pm_shell.workspace.paths import resolve_context
+
+    epic_key, story_key = resolve_context()
+    if story_key:
+        if owner is not None:
+            err_console.print("[dim]--owner is epic-only; ignored on a story[/]")
+        story_cmd.story_set(
+            key=story_key,
+            status=status, priority=priority, summary=summary,
+            assignee=assignee, label=label, description=description,
+            epic=epic, points=points,
+        )
+        return
+
+    if epic_key:
+        story_only = {"--assignee": assignee, "--epic": epic, "--points": points}
+        ignored = [name for name, val in story_only.items() if val is not None]
+        if ignored:
+            err_console.print(f"[dim]{', '.join(ignored)} are story-only; ignored on an epic[/]")
+        epic_cmd.epic_set(
+            key=epic_key,
+            status=status, priority=priority, summary=summary,
+            owner=owner, label=label, description=description,
+        )
+        return
+
+    err_console.print(
+        "[yellow]No context.[/] cd into an epic or story directory, "
+        "or use `pm epic set KEY ...` / `pm story set KEY ...` explicitly."
+    )
+    raise typer.Exit(code=1)
 
 
 @app.command("edit")
