@@ -2,6 +2,7 @@
 
 Screen {
     background: $background;
+    scrollbar-size: 0 0;
 }
 
 #diff-header {
@@ -20,7 +21,7 @@ Screen {
     border-right: solid $primary-darken-3;
     background: $background;
     background-tint: $background 0%;
-    scrollbar-size-vertical: 1;
+    scrollbar-size: 0 0;
 }
 
 #diff-files > ListItem {
@@ -43,5 +44,5 @@ Screen {
     height: 1fr;
     padding: 0 1;
     background: $background;
-    scrollbar-size-vertical: 1;
+    scrollbar-size: 0 0;
 }
