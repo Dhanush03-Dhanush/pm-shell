@@ -108,6 +108,16 @@ class _Context:
     # created) earlier in this merge. Lets child phases preview their work even
     # though the on-disk `_unpushed` flag is still set in dry-run mode.
     created_keys: set[str] = field(default_factory=set)
+    # Story Points field ID for this tenant. Different Jira projects assign different
+    # custom-field IDs (commonly customfield_10016 in classic scrum, 10026 in team-managed,
+    # absent entirely in basic kanban). Resolved lazily and cached for the merge.
+    points_field_id: Optional[str] = None
+    points_field_resolved: bool = False
+    # canonical priority (low/medium/high/critical) → Jira priority display name
+    # ("Low"/"High"/"Highest"/...). Resolved lazily from /rest/api/3/priority since
+    # tenants vary (some use Highest..Lowest, some use Critical..Trivial, some custom).
+    priority_map: dict[str, str] = field(default_factory=dict)
+    priority_map_resolved: bool = False
 
 
 # ── Public entry point ──────────────────────────────────────────────────────
@@ -456,7 +466,9 @@ def _build_create_fields(
         "summary": (record.get("summary") or "").strip() or "(untitled)",
     }
     if record.get("priority"):
-        fields["priority"] = {"name": record["priority"].title()}
+        jira_name = _resolve_priority_name(ctx, record["priority"], outcome)
+        if jira_name:
+            fields["priority"] = {"name": jira_name}
     if record.get("labels"):
         fields["labels"] = list(record["labels"])
     if record.get("description"):
@@ -469,7 +481,9 @@ def _build_create_fields(
         fields["assignee"] = {"accountId": assignee_id}
 
     if issue_type == "Story" and record.get("points") is not None:
-        fields["customfield_10016"] = record["points"]
+        points_field = _resolve_points_field_id(ctx, outcome)
+        if points_field:
+            fields[points_field] = record["points"]
 
     return fields
 
@@ -479,7 +493,9 @@ def _build_update_fields(record: dict, ctx: _Context, *, outcome: PushOutcome) -
     via /transitions; see `_apply_transition`."""
     fields: dict[str, Any] = {"summary": (record.get("summary") or "").strip()}
     if record.get("priority"):
-        fields["priority"] = {"name": record["priority"].title()}
+        jira_name = _resolve_priority_name(ctx, record["priority"], outcome)
+        if jira_name:
+            fields["priority"] = {"name": jira_name}
     fields["labels"] = list(record.get("labels") or [])
     if record.get("description") is not None:
         fields["description"] = record["description"]
@@ -493,7 +509,9 @@ def _build_update_fields(record: dict, ctx: _Context, *, outcome: PushOutcome) -
             fields["assignee"] = {"accountId": assignee_id}
 
     if record.get("points") is not None:
-        fields["customfield_10016"] = record["points"]
+        points_field = _resolve_points_field_id(ctx, outcome)
+        if points_field:
+            fields[points_field] = record["points"]
 
     return fields
 
@@ -503,6 +521,73 @@ def _assignee_account_id(record: dict, ctx: _Context, outcome: PushOutcome) -> O
     if not isinstance(user, dict) or not user.get("email"):
         return None
     return _resolve_account_id(ctx, user["email"], outcome)
+
+
+_POINTS_FIELD_NAMES = {"story points", "story point estimate"}
+
+# Per canonical priority, the Jira display names we'll accept (case-insensitive),
+# ordered by preference. The first one that exists in the tenant wins.
+_PRIORITY_PREFERENCES: dict[str, tuple[str, ...]] = {
+    "critical": ("highest", "critical", "blocker"),
+    "high": ("high", "major"),
+    "medium": ("medium", "normal"),
+    "low": ("low", "minor", "lowest"),
+}
+
+
+def _resolve_priority_name(ctx: _Context, canonical: str, outcome: PushOutcome) -> Optional[str]:
+    """Translate a canonical priority into the Jira name configured for this tenant.
+
+    Cached for the merge. Returns None when the tenant exposes no priority that we
+    can map to (uncommon — basic projects always have at least Low/Medium/High).
+    """
+    if not ctx.priority_map_resolved:
+        ctx.priority_map_resolved = True
+        try:
+            priorities = ctx.client.get("/rest/api/3/priority") or []
+        except JiraHTTPError:
+            outcome.warn("could not list Jira priorities; priority edits will be skipped")
+            return None
+        available = {(p.get("name") or "").lower(): p["name"] for p in priorities}
+        for canon, preferred in _PRIORITY_PREFERENCES.items():
+            for candidate in preferred:
+                if candidate in available:
+                    ctx.priority_map[canon] = available[candidate]
+                    break
+
+    name = ctx.priority_map.get(canonical)
+    if name is None:
+        outcome.warn(f"no Jira priority maps to canonical {canonical!r}; field skipped")
+    return name
+
+
+def _resolve_points_field_id(ctx: _Context, outcome: PushOutcome) -> Optional[str]:
+    """Look up the Story Points custom-field ID for this tenant, cached for the merge.
+
+    Returns the field ID (e.g. ``customfield_10026``), or None if the project has no
+    Story Points field at all (common for basic Kanban templates). In the missing
+    case we warn once so the user understands why their `--points` edits no-op.
+    """
+    if ctx.points_field_resolved:
+        return ctx.points_field_id
+
+    ctx.points_field_resolved = True
+    try:
+        fields = ctx.client.get("/rest/api/3/field")
+    except JiraHTTPError:
+        outcome.warn("could not list Jira fields; story points will be skipped this merge")
+        return None
+
+    for f in fields or []:
+        if (f.get("name") or "").lower() in _POINTS_FIELD_NAMES:
+            ctx.points_field_id = f.get("id")
+            return ctx.points_field_id
+
+    outcome.warn(
+        "this Jira project has no Story Points field configured; "
+        "local `points` values won't be pushed"
+    )
+    return None
 
 
 # ── Helpers: transitions, users, baselines ──────────────────────────────────
