@@ -104,6 +104,10 @@ class _Context:
     accountid_cache: dict[str, Optional[str]] = field(default_factory=dict)
     # NEW-1 → KAN-99 once the parent has landed; used to rewrite story.epic refs.
     new_key_map: dict[str, str] = field(default_factory=dict)
+    # Local keys whose parent issue was created (or, in dry-run, would have been
+    # created) earlier in this merge. Lets child phases preview their work even
+    # though the on-disk `_unpushed` flag is still set in dry-run mode.
+    created_keys: set[str] = field(default_factory=set)
 
 
 # ── Public entry point ──────────────────────────────────────────────────────
@@ -163,8 +167,10 @@ def _phase_create_stories(ctx: _Context, outcome: PushOutcome, dry_run: bool, pr
 
 def _phase_create_subtasks(ctx: _Context, outcome: PushOutcome, dry_run: bool, progress: ProgressFn) -> None:
     for sdir, story, _ in _iter_stories(skip_deleted=True):
-        # Skip stories that aren't in Jira yet — their parents weren't pushed; nothing to attach to.
-        if story.get("_unpushed"):
+        # Skip subtasks whose parent story never made it to Jira (or whose creation
+        # failed this run). `created_keys` covers the dry-run case where the parent
+        # was previewed but `_unpushed` is still on disk.
+        if story.get("_unpushed") and story["key"] not in ctx.created_keys:
             continue
         tasks_path = sdir / "tasks.json"
         if not tasks_path.exists():
@@ -194,19 +200,22 @@ def _phase_update_issues(ctx: _Context, outcome: PushOutcome, dry_run: bool, pro
 
 def _phase_create_comments(ctx: _Context, outcome: PushOutcome, dry_run: bool, progress: ProgressFn) -> None:
     for sdir, story, _ in _iter_stories(skip_deleted=True):
-        if story.get("_unpushed"):
-            continue  # newly-created story; its comments will be picked up next merge cycle
+        # Same logic as the subtask phase: skip only when the parent story isn't in
+        # Jira yet (i.e., its creation didn't happen / wasn't planned this run).
+        if story.get("_unpushed") and story["key"] not in ctx.created_keys:
+            continue
         path = sdir / "comments.json"
         if not path.exists():
             continue
         comments = read_json(path)
         for idx, comment in enumerate(comments):
             if comment.get("_unpushed"):
-                _push_create_comment(ctx, story["key"], comments, idx, path, outcome, dry_run, progress)
+                story_key = ctx.new_key_map.get(story["key"], story["key"])
+                _push_create_comment(ctx, story_key, comments, idx, path, outcome, dry_run, progress)
 
 
 def _phase_delete_stories(ctx: _Context, outcome: PushOutcome, dry_run: bool, progress: ProgressFn) -> None:
-    for sdir, record, _ in _iter_stories(include_deleted=True):
+    for sdir, record, _ in _iter_stories():
         if record.get("_deleted") and not record.get("_unpushed"):
             _push_delete_issue(ctx, sdir, record, "story", outcome, dry_run, progress)
 
@@ -226,10 +235,11 @@ def _push_create_epic(
     old_key = record["key"]
     label = f"create epic {old_key} ({record.get('summary', '')!r})"
     if dry_run:
+        ctx.created_keys.add(old_key)
         outcome.ok(f"would {label}")
         return
 
-    payload = _build_create_fields(record, ctx, issue_type="Epic", parent=None)
+    payload = _build_create_fields(record, ctx, issue_type="Epic", parent=None, outcome=outcome)
     try:
         result = ctx.client.post("/rest/api/3/issue", json={"fields": payload})
     except JiraHTTPError as exc:
@@ -237,10 +247,12 @@ def _push_create_epic(
         return
 
     real_key = result["key"]
+    ctx.created_keys.add(old_key)
+    _transition_after_create(ctx, real_key, record.get("status"), outcome)
+
     ctx.new_key_map[old_key] = real_key
     new_edir = _adopt_real_key(edir, "epic.json", old_key, real_key, ctx)
 
-    # Rewrite story.epic = NEW-1 → KAN-N for any child stories still on disk.
     for sd in new_edir.iterdir():
         if not sd.is_dir():
             continue
@@ -260,18 +272,16 @@ def _push_create_story(
     outcome: PushOutcome, dry_run: bool, progress: ProgressFn,
 ) -> None:
     old_key = record["key"]
-    epic_ref = record.get("epic")
-    if epic_ref and epic_ref in ctx.new_key_map:
-        epic_ref = ctx.new_key_map[epic_ref]
-        record["epic"] = epic_ref
+    epic_ref = ctx.new_key_map.get(record.get("epic"), record.get("epic"))
 
     label = f"create story {old_key} ({record.get('summary', '')!r})"
     if dry_run:
+        ctx.created_keys.add(old_key)
         outcome.ok(f"would {label}")
         return
 
     parent_clause = {"key": epic_ref} if epic_ref else None
-    payload = _build_create_fields(record, ctx, issue_type="Story", parent=parent_clause)
+    payload = _build_create_fields(record, ctx, issue_type="Story", parent=parent_clause, outcome=outcome)
     try:
         result = ctx.client.post("/rest/api/3/issue", json={"fields": payload})
     except JiraHTTPError as exc:
@@ -279,6 +289,9 @@ def _push_create_story(
         return
 
     real_key = result["key"]
+    ctx.created_keys.add(old_key)
+    _transition_after_create(ctx, real_key, record.get("status"), outcome)
+
     ctx.new_key_map[old_key] = real_key
     _adopt_real_key(sdir, "story.json", old_key, real_key, ctx)
 
@@ -296,9 +309,9 @@ def _push_create_subtask(
         outcome.ok(f"would {label}")
         return
 
-    payload = {
+    payload: dict[str, Any] = {
         "project": {"key": ctx.project_key},
-        "issuetype": {"name": "Subtask"},  # also seen as "Sub-task" — adjust if your tenant differs
+        "issuetype": {"name": "Subtask"},
         "summary": task.get("title", "").strip() or "(untitled)",
         "parent": {"key": story["key"]},
     }
@@ -315,16 +328,16 @@ def _push_create_subtask(
         return
 
     real_key = result["key"]
+    _transition_after_create(ctx, real_key, task.get("status"), outcome)
+
     fetched = _fetch_issue(ctx.client, real_key)
     if fetched:
         atomic_write_json(baseline_dir() / f"{real_key}.json", fetched)
         new_shape = task_shape(task["id"], fetched, ctx.status_map)
-        # preserve local 1-indexed id while swapping in real fields
         new_shape["id"] = task["id"]
         tasks[idx] = new_shape
     else:
-        # Fall back to minimal stub if the GET failed.
-        tasks[idx] = {**task, "key": real_key, "_unpushed": False}
+        tasks[idx] = {**task, "key": real_key}
         tasks[idx].pop("_unpushed", None)
 
     atomic_write_json(sdir / "tasks.json", tasks)
@@ -338,16 +351,11 @@ def _push_update_issue(
 ) -> None:
     key = record["key"]
     label = f"update {kind} {key}"
-    fields = _build_update_fields(record, ctx)
+    fields = _build_update_fields(record, ctx, outcome=outcome)
     canonical_status = record.get("status")
 
-    if not fields and not canonical_status:
-        return  # nothing to do
-
     if dry_run:
-        bits = []
-        if fields:
-            bits.append(f"PUT fields={sorted(fields)}")
+        bits = [f"PUT fields={sorted(fields)}"] if fields else []
         if canonical_status:
             bits.append(f"transition→{canonical_status}")
         outcome.ok(f"would {label}: {', '.join(bits)}")
@@ -434,11 +442,18 @@ def _push_delete_issue(
 # ── Helpers: payloads ───────────────────────────────────────────────────────
 
 
-def _build_create_fields(record: dict, ctx: _Context, *, issue_type: str, parent: Optional[dict]) -> dict:
+def _build_create_fields(
+    record: dict, ctx: _Context, *, issue_type: str, parent: Optional[dict], outcome: PushOutcome,
+) -> dict[str, Any]:
+    """Build a Jira REST v3 `fields` payload for POST /rest/api/3/issue.
+
+    Status is intentionally excluded — Jira always lands new issues in the project's
+    default status and a separate /transitions call is required afterwards.
+    """
     fields: dict[str, Any] = {
         "project": {"key": ctx.project_key},
         "issuetype": {"name": issue_type},
-        "summary": record.get("summary", "").strip() or "(untitled)",
+        "summary": (record.get("summary") or "").strip() or "(untitled)",
     }
     if record.get("priority"):
         fields["priority"] = {"name": record["priority"].title()}
@@ -449,11 +464,9 @@ def _build_create_fields(record: dict, ctx: _Context, *, issue_type: str, parent
     if parent:
         fields["parent"] = parent
 
-    user = record.get("assignee") or record.get("owner")
-    if isinstance(user, dict) and user.get("email"):
-        account_id = _resolve_account_id(ctx, user["email"], outcome=None)
-        if account_id:
-            fields["assignee"] = {"accountId": account_id}
+    assignee_id = _assignee_account_id(record, ctx, outcome)
+    if assignee_id:
+        fields["assignee"] = {"accountId": assignee_id}
 
     if issue_type == "Story" and record.get("points") is not None:
         fields["customfield_10016"] = record["points"]
@@ -461,10 +474,10 @@ def _build_create_fields(record: dict, ctx: _Context, *, issue_type: str, parent
     return fields
 
 
-def _build_update_fields(record: dict, ctx: _Context) -> dict:
-    """Build a PUT payload from the current local record. Status is NOT included
-    here — it goes through /transitions separately."""
-    fields: dict[str, Any] = {"summary": record.get("summary", "").strip()}
+def _build_update_fields(record: dict, ctx: _Context, *, outcome: PushOutcome) -> dict[str, Any]:
+    """Build a PUT payload from the current local record. Status is sent separately
+    via /transitions; see `_apply_transition`."""
+    fields: dict[str, Any] = {"summary": (record.get("summary") or "").strip()}
     if record.get("priority"):
         fields["priority"] = {"name": record["priority"].title()}
     fields["labels"] = list(record.get("labels") or [])
@@ -472,17 +485,24 @@ def _build_update_fields(record: dict, ctx: _Context) -> dict:
         fields["description"] = record["description"]
 
     user = record.get("assignee") or record.get("owner")
-    if isinstance(user, dict) and user.get("email"):
-        account_id = _resolve_account_id(ctx, user["email"], outcome=None)
-        if account_id:
-            fields["assignee"] = {"accountId": account_id}
-    elif user is None:
+    if user is None:
         fields["assignee"] = None
+    else:
+        assignee_id = _assignee_account_id(record, ctx, outcome)
+        if assignee_id:
+            fields["assignee"] = {"accountId": assignee_id}
 
-    if "points" in record and record.get("points") is not None:
+    if record.get("points") is not None:
         fields["customfield_10016"] = record["points"]
 
     return fields
+
+
+def _assignee_account_id(record: dict, ctx: _Context, outcome: PushOutcome) -> Optional[str]:
+    user = record.get("assignee") or record.get("owner")
+    if not isinstance(user, dict) or not user.get("email"):
+        return None
+    return _resolve_account_id(ctx, user["email"], outcome)
 
 
 # ── Helpers: transitions, users, baselines ──────────────────────────────────
@@ -500,6 +520,9 @@ def _apply_transition(ctx: _Context, key: str, canonical_status: str, outcome: P
         None,
     )
     if match is None:
+        # No path → either already in that state (Jira hides self-transitions) or the
+        # workflow truly doesn't allow it. The first case is a no-op, the second is
+        # surfaceable but rare; warn and move on either way.
         outcome.warn(f"{key}: no available transition lands on {target_name!r}; skipped")
         return
 
@@ -507,6 +530,23 @@ def _apply_transition(ctx: _Context, key: str, canonical_status: str, outcome: P
         f"/rest/api/3/issue/{key}/transitions",
         json={"transition": {"id": match["id"]}},
     )
+
+
+def _transition_after_create(
+    ctx: _Context, key: str, canonical_status: Optional[str], outcome: PushOutcome,
+) -> None:
+    """Move a freshly-created issue into the desired canonical status if it isn't already.
+
+    Jira always lands new issues in the project's default status (typically "To Do"),
+    so a `pm epic create … --status in-progress` flow needs an explicit transition
+    after the POST or the local intent is silently lost.
+    """
+    if not canonical_status:
+        return
+    try:
+        _apply_transition(ctx, key, canonical_status, outcome)
+    except JiraHTTPError as exc:
+        outcome.warn(f"{key}: created but transition to {canonical_status!r} failed: {_format_http_error(exc)}")
 
 
 def _resolve_project_key(client: JiraClient, config: Config) -> str:
@@ -585,8 +625,21 @@ def _iter_epics(*, include_deleted: bool = False):
         yield edir, record
 
 
-def _iter_stories(*, include_deleted: bool = False, skip_deleted: bool = False):
-    """Yields (story_dir, story_record, epic_dir_or_None) for every story."""
+def _iter_stories(*, skip_deleted: bool = False):
+    """Yields `(story_dir, story_record, epic_dir_or_None)` for every story on disk.
+
+    Tombstoned (`_deleted`) records are yielded by default — the delete phase needs
+    them — and callers that don't want them pass `skip_deleted=True`.
+    """
+    def _emit(sdir: Path, edir: Optional[Path]):
+        spath = sdir / "story.json"
+        if not spath.exists():
+            return None
+        record = read_json(spath)
+        if skip_deleted and record.get("_deleted"):
+            return None
+        return sdir, record, edir
+
     root = epics_dir()
     if root.exists():
         for edir in sorted(root.iterdir()):
@@ -595,28 +648,18 @@ def _iter_stories(*, include_deleted: bool = False, skip_deleted: bool = False):
             for sdir in sorted(edir.iterdir()):
                 if not sdir.is_dir():
                     continue
-                spath = sdir / "story.json"
-                if not spath.exists():
-                    continue
-                record = read_json(spath)
-                if skip_deleted and record.get("_deleted"):
-                    continue
-                if not include_deleted and not skip_deleted and record.get("_deleted"):
-                    pass  # default: include but signal via record
-                yield sdir, record, edir
+                result = _emit(sdir, edir)
+                if result is not None:
+                    yield result
 
     orphans = unparented_dir()
     if orphans.exists():
         for sdir in sorted(orphans.iterdir()):
             if not sdir.is_dir():
                 continue
-            spath = sdir / "story.json"
-            if not spath.exists():
-                continue
-            record = read_json(spath)
-            if skip_deleted and record.get("_deleted"):
-                continue
-            yield sdir, record, None
+            result = _emit(sdir, None)
+            if result is not None:
+                yield result
 
 
 # ── Helpers: post-create local renames ──────────────────────────────────────
@@ -656,12 +699,15 @@ def _adopt_real_key(item_dir: Path, json_filename: str, old_key: str, real_key: 
 
 def _format_http_error(exc: JiraHTTPError) -> str:
     body = exc.body
-    if isinstance(body, dict):
-        errs = body.get("errorMessages") or []
-        field_errs = body.get("errors") or {}
-        joined = ", ".join(errs) if errs else "; ".join(f"{k}: {v}" for k, v in field_errs.items())
-        return f"{exc.status_code} {joined or 'no details'}"
-    return f"{exc.status_code} {body!s}"
+    if not isinstance(body, dict):
+        return f"{exc.status_code} {body!s}"
+
+    parts: list[str] = []
+    for msg in body.get("errorMessages") or []:
+        parts.append(str(msg))
+    for fname, fmsg in (body.get("errors") or {}).items():
+        parts.append(f"{fname}: {fmsg}")
+    return f"{exc.status_code} {'; '.join(parts) or 'no details'}"
 
 
 def _now() -> str:
