@@ -37,94 +37,83 @@ If you don't see `pm` on your PATH after the install, run `uv tool update-shell`
 
 ### First-time setup
 
-Setup is two separate things, done at different cadences:
+Setup is three things, done at three different cadences:
 
-| Step | When | What it does |
+| Step | Command | When |
 |---|---|---|
-| **Part A — Create the Jira project** | **Once.** Ever. | POSTs `/rest/api/3/project` to make a new "space" in Jira (issue types, board, workflow). |
-| **Part B — Create a local workspace** | **As many times as you want**, in any directory. | Writes a `.jira/` mirror of an *existing* Jira project. Independent local copies; they all push back to the same Jira project. |
-
-You only run Part A when you don't already have a Jira project to use. After that, every new code repo / scratch directory just needs Part B.
+| 1. Save credentials globally | hand-edit `~/.config/pm-shell/secrets.json` | **Once per machine.** |
+| 2. Create a Jira project ("space") | `pm create` | **Once per project**, ever. Registers it in `~/.config/pm-shell/spaces.json`. |
+| 3. Mirror a space into a local workspace | `pm clone --space "<name>"` | **As many times as you want**, in any directory. |
 
 Get a Jira API token first at <https://id.atlassian.com/manage-profile/security/api-tokens>.
 
-#### Part A — Create the Jira project (one-time)
-
-`scripts/create_board.py` creates a fresh team-managed Scrum project so it has exactly the issue types, priorities, and workflow pm-shell expects. Do this once, then never again for this project.
+#### 1. Save credentials globally (once per machine)
 
 ```bash
-# Pick any temporary directory to run the bootstrap from.
-mkdir -p ~/work/jira-bootstrap && cd ~/work/jira-bootstrap
-
-cat > jira-secrets.json <<'EOF'
+mkdir -p ~/.config/pm-shell
+cat > ~/.config/pm-shell/secrets.json <<'EOF'
 {
   "baseUrl":  "https://your-tenant.atlassian.net",
   "email":    "you@example.com",
   "apiToken": "<paste-your-token>"
 }
 EOF
-pm config init --from jira-secrets.json
-
-cp /path/to/pm-shell/scripts/board_config.example.json ./board_config.json
-$EDITOR board_config.json     # set `key` (2–10 uppercase) and `name`
-
-/path/to/pm-shell/.venv/bin/python \
-    /path/to/pm-shell/scripts/create_board.py ./board_config.json
+chmod 600 ~/.config/pm-shell/secrets.json
 ```
 
-The script prints (and you should save):
+This file is read by `pm create` and `pm clone --space`. You write it once, then forget about it — no per-workspace secrets file needed anywhere.
 
-```
-  project key : AI
-  board id    : 42
-```
-
-That `boardId` is the only thing you'll need going forward. The `~/work/jira-bootstrap` directory has served its purpose — you can keep it as one of your workspaces, or delete it entirely.
-
-**What the spec controls:**
-
-```json
-{
-  "key":  "AI",
-  "name": "AI projects",
-  "projectTypeKey":     "software",
-  "projectTemplateKey": "com.pyxis.greenhopper.jira:gh-simplified-agility-scrum",
-  "assigneeType":       "UNASSIGNED",
-  "leadAccountId":       null
-}
-```
-
-You're really only editing `key` and `name`. Everything else is fixed at the team-managed Scrum template — `Epic / Story / Task / Subtask` issue types, `Highest..Lowest` priorities, `To Do / In Progress / Done` workflow, and a Story-Points-aware setup. That's the configuration pm-shell's `merge` is built around.
-
-#### Part B — Create a local workspace (repeatable, once per directory)
-
-Once the Jira project exists, mirroring it into any local directory is just two commands. Do this in your code repo, in a scratch folder, in a second machine — anywhere.
+#### 2. Create a Jira project (once per project)
 
 ```bash
-cd ~/code/my-ai-service        # or any other directory
-
-cat > jira-secrets.json <<'EOF'
-{
-  "baseUrl":  "https://your-tenant.atlassian.net",
-  "email":    "you@example.com",
-  "apiToken": "<paste-your-token>",
-  "boardId":  42
-}
-EOF
-pm config init --from jira-secrets.json
-rm jira-secrets.json            # optional — already copied into .jira/
-
-pm clone                        # mirrors the project into .jira/
-pm                              # open the shell
+pm create
+# Space name: AI Board
+# Project key (2–10 uppercase letters/digits): AI
 ```
 
-`boardId` is the integer from Part A's output (or from any Jira board URL: `/jira/software/projects/AI/boards/42` → `42`). You can repeat this in as many directories as you want — each gets an independent `.jira/` and they all push to the same Jira project on `pm merge`.
+What this does: POSTs `/rest/api/3/project` against your tenant with the team-managed Scrum template (so the project comes pre-loaded with `Epic / Story / Task / Subtask` issue types, `Highest..Lowest` priorities, `To Do / In Progress / Done` workflow, and a Story-Points-aware setup — the configuration `pm merge` is built around). The resulting `{name → boardId}` mapping is recorded in `~/.config/pm-shell/spaces.json`.
 
-> ⚠ pm-shell has no merge-conflict detection — last-write-wins. If you maintain two workspaces against the same project, treat them as serial (push-then-pull-elsewhere), not concurrent.
+You can also pass flags non-interactively:
 
-#### Alternative — skip Part A entirely
+```bash
+pm create --name "AI Board" --key AI --description "AI-team work"
+```
 
-If you already have a Jira board you want to mirror (e.g. your team's existing board), skip the script and go straight to Part B with that board's `boardId`. pm-shell's `merge` auto-detects the project's issue-type names, priority map, and Story Points field on push, so existing boards work — but a project lacking an issue type literally named `Story` is the main rough edge today.
+To see what's registered:
+
+```bash
+pm spaces
+# NAME       KEY  BOARD ID  CREATED
+# AI Board   AI   42        2026-05-14T23:55:11
+# Ops        OPS  56        2026-05-15T01:02:08
+```
+
+#### 3. Mirror a space into a workspace (repeatable)
+
+```bash
+cd ~/code/my-ai-service
+pm clone --space "AI Board"
+pm                              # open the interactive shell
+```
+
+`pm clone --space "AI Board"` looks up the boardId in `~/.config/pm-shell/spaces.json`, writes `.jira/config.json` in the current directory by combining the global secrets with that space's `boardId`/`projectKey`, then clones. Repeat in as many directories as you want — each one is an independent local mirror, and they all push to the same Jira space on `pm merge`.
+
+> ⚠ pm-shell has no merge-conflict detection — last-write-wins. If you maintain two workspaces against the same space, treat them as serial (push-then-`pm clone --force` elsewhere), not concurrent.
+
+#### Alternative — point at an existing Jira board
+
+If you already have a Jira board outside this flow (your team's, or a project somebody else created):
+
+```bash
+cd ~/code/some-project
+cat > jira-secrets.json <<'EOF'
+{ "baseUrl": "...", "email": "...", "apiToken": "...", "boardId": 7 }
+EOF
+pm config init --from jira-secrets.json && rm jira-secrets.json
+pm clone
+```
+
+`pm merge` auto-detects the project's issue-type names, priority map, and Story Points field on push, so existing boards work — but a project lacking an issue type literally named `Story` is the main rough edge today (see Known limits).
 
 ---
 
