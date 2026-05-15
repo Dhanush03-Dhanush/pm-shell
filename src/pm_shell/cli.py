@@ -244,6 +244,45 @@ def cmd_clone(
     )
 
 
+_POINTS_FIELD_NAMES = {"story points", "story point estimate"}
+_POINTS_FIELD_SPEC = {
+    "name": "Story Points",
+    "description": "Estimate of work for an issue (sprint planning).",
+    "type": "com.atlassian.jira.plugin.system.customfieldtypes:float",
+    "searcherKey": "com.atlassian.jira.plugin.system.customfieldtypes:exactnumber",
+}
+
+
+def _ensure_story_points_field(client: JiraClient) -> tuple[str, bool]:
+    """Make sure the tenant has a Story Points number custom field.
+
+    Returns `(field_id, created)`. Idempotent — re-running on a tenant that already
+    has the field is a single GET. The field is tenant-wide, so creating it once
+    means every team-managed project (existing and future) can use it.
+    """
+    fields = client.get("/rest/api/3/field") or []
+    for f in fields:
+        if (f.get("name") or "").lower() in _POINTS_FIELD_NAMES:
+            return f["id"], False
+
+    try:
+        result = client.post("/rest/api/3/field", json=_POINTS_FIELD_SPEC)
+    except JiraHTTPError as exc:
+        if exc.status_code in (401, 403):
+            err_console.print(
+                f"[red]Cannot create the Story Points field:[/] {exc.status_code} {exc.body}\n"
+                "Creating tenant-wide custom fields needs Jira-admin permission. "
+                "Either grant your account that permission, or create the field by hand in "
+                "Jira → Settings → Issues → Custom fields → Add (Number, name it 'Story Points')."
+            )
+            raise typer.Exit(code=2) from None
+        err_console.print(
+            f"[red]Failed to create Story Points field:[/] {exc.status_code} {exc.body}"
+        )
+        raise typer.Exit(code=1) from None
+    return result["id"], True
+
+
 def _bootstrap_workspace_from_space(space_name: str, *, force: bool) -> None:
     """Write `.jira/config.json` in cwd from the global secrets + named space.
 
@@ -293,8 +332,12 @@ def cmd_create(
 
     Requires ~/.config/pm-shell/secrets.json with baseUrl, email, apiToken.
     Hard-coded to the team-managed Scrum template — that gives you Epic / Story /
-    Task / Subtask issue types and the standard Highest..Lowest priorities,
-    which is what `pm merge` is built around.
+    Task / Subtask issue types and the standard Highest..Lowest priorities.
+
+    Also guarantees the tenant has a Story Points number custom field (creates one
+    the first time, idempotent thereafter). Together that's the configuration
+    `pm merge` is built around — no follow-up Jira-UI work needed for points to
+    round-trip on stories created in the new space.
     """
     try:
         secrets = load_secrets()
@@ -329,6 +372,15 @@ def cmd_create(
 
     cfg = Config.model_validate(secrets)
     with JiraClient(cfg) as client:
+        points_field_id, points_created = _ensure_story_points_field(client)
+        if points_created:
+            console.print(
+                f"[green]Created tenant-wide Story Points field[/] "
+                f"(id=[cyan]{points_field_id}[/]) — available to every team-managed project."
+            )
+        else:
+            console.print(f"[dim]Story Points field already exists ({points_field_id}); reusing.[/]")
+
         lead = client.myself()["accountId"]
         body = {
             "key": key,

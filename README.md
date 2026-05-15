@@ -71,7 +71,13 @@ pm create
 # Project key (2–10 uppercase letters/digits): AI
 ```
 
-What this does: POSTs `/rest/api/3/project` against your tenant with the team-managed Scrum template (so the project comes pre-loaded with `Epic / Story / Task / Subtask` issue types, `Highest..Lowest` priorities, `To Do / In Progress / Done` workflow, and a Story-Points-aware setup — the configuration `pm merge` is built around). The resulting `{name → boardId}` mapping is recorded in `~/.config/pm-shell/spaces.json`.
+What this does:
+
+1. Ensures a tenant-wide `Story Points` number custom field exists (creates it the first time you run `pm create`, no-ops thereafter). This is a one-time per-tenant action; once it's there, every team-managed project — including the one we're about to create — gets it automatically.
+2. POSTs `/rest/api/3/project` with the team-managed Scrum template, so the project comes pre-loaded with `Epic / Story / Task / Subtask` issue types, `Highest..Lowest` priorities, and the `To Do / In Progress / Done` workflow.
+3. Records the resulting `{name → boardId, projectKey}` mapping in `~/.config/pm-shell/spaces.json`.
+
+The Story-Points step needs Jira-admin permission. If your account doesn't have it, `pm create` fails with a clear pointer at the Jira UI path you'd need to use instead — no half-created project gets left behind.
 
 You can also pass flags non-interactively:
 
@@ -452,7 +458,7 @@ These are documented limits, not bugs. Each has a planned solution but isn't bui
 - **No conflict detection on `merge`** — last-write-wins. Safe for solo workspaces; collaborative use needs a re-fetch-before-write pass.
 - **Sub-task modifications / deletions** are not pushed by `merge` — only new sub-tasks are created. Re-titling or status-changing an existing sub-task locally won't sync.
 - **Assignee email → accountId** uses Jira's `/user/search`. No match means the field is sent as `null` with a warning in the merge outcome.
-- **Story points** field ID is auto-detected per merge (looks for the field named "Story Points" or "Story point estimate"). If the project has no points field — common on basic-Kanban templates — the value is skipped with a single warning rather than failing the push. The create-a-fresh-space flow uses the Scrum template so the field is always present.
+- **Story points** field ID is auto-detected per merge (looks for the field named "Story Points" or "Story point estimate"). `pm create` provisions this field tenant-wide on first use, so spaces created through the CLI always have it. For workspaces pointed at boards you didn't create (the "Alternative" setup path), if the project has no points field the value is skipped with a single warning rather than failing the push.
 - **Issue-type names** (`Story` / `Task` / `User Story` / etc) are project-specific. The bundled spec creates a project that has `Story`, which is what the CLI's local records use. Pointing pm-shell at an arbitrary existing project that lacks an issue type literally called `Story` is the main rough edge today.
 - **Cloned-priority round-trip**: the workspace stores priority as the lowercased Jira name (e.g. `"highest"`), but the CLI's canonical set is `low/medium/high/critical`. A story originally cloned with priority `Highest` can't currently be edited through the CLI and pushed back — `merge` will skip the field with a warning.
 - **`pm pull` (incremental refresh)** isn't implemented yet. To re-sync, run `pm clone --force` (which wipes any unpushed local edits).
