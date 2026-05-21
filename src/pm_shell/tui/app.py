@@ -11,8 +11,9 @@ from __future__ import annotations
 import difflib
 import os
 import shlex
+from collections import Counter
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Callable, Optional
 
 import click
 from prompt_toolkit.completion import CompleteEvent
@@ -106,6 +107,9 @@ class PMShell(App):
         self._history_idx: Optional[int] = None
         self._original_cwd: Optional[Path] = None
         self._known_commands = _collect_known_commands(typer_app)
+        # When set, the next submitted input is routed to this callback instead
+        # of being treated as a command (used for inline y/n prompts).
+        self._pending_input: Optional[Callable[[str], None]] = None
 
     def compose(self) -> ComposeResult:
         yield Static(self._banner_text(), id="banner")
@@ -175,15 +179,30 @@ class PMShell(App):
         self.query_one("#prompt-context", Static).update(self._context_label())
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
-        line = event.value.strip()
+        raw = event.value
         event.input.value = ""
+
+        log = self.query_one("#log", RichLog)
+
+        # If a previous command asked for inline input (y/n), route this line
+        # to the registered callback instead of dispatching it as a command.
+        if self._pending_input is not None:
+            pending = self._pending_input
+            self._pending_input = None
+            echo = self._context_label().copy()
+            echo.append(" ")
+            echo.append(raw)
+            log.write(echo)
+            pending(raw.strip())
+            return
+
+        line = raw.strip()
         if not line:
             return
 
         self._history.append(line)
         self._history_idx = None
 
-        log = self.query_one("#log", RichLog)
         echo = self._context_label().copy()
         echo.append(" ")
         echo.append(line)
@@ -217,8 +236,8 @@ class PMShell(App):
         if head == "diff" and not rest:
             self._open_diff_screen()
             return
-        if head == "merge" and "--yes" not in rest and "-y" not in rest and "--dry-run" not in rest:
-            self._open_merge_confirm(rest)
+        if head == "merge" and "--help" not in rest and "-h" not in rest:
+            self._handle_merge(rest)
             return
 
         if head not in self._known_commands:
@@ -295,44 +314,101 @@ class PMShell(App):
             return
         self.push_screen(DiffScreen(changes))
 
-    def _open_merge_confirm(self, extra_args: list[str]) -> None:
-        """Show a Yes/No modal summarising what would be merged; on Yes dispatch with --yes."""
+    def _handle_merge(self, extra_args: list[str]) -> None:
+        """Inline-confirm and run the merge, streaming per-operation progress into the log.
+
+        Replaces the modal confirm + dispatch-with-capture path so users see each
+        step land in real time (push can take a while for large workspaces).
+        """
         from pm_shell.sync.diff import compute_changes
-        from pm_shell.tui.confirm_screen import ConfirmScreen
 
         log = self.query_one("#log", RichLog)
+
+        yes = "--yes" in extra_args or "-y" in extra_args
+        dry_run = "--dry-run" in extra_args
+
         changes = compute_changes()
         if not changes:
             log.write(Text.from_markup("[dim]workspace is clean — nothing to merge[/dim]"))
             return
 
-        body = self._merge_summary_text(changes)
+        log.write(self._merge_preview_text(changes, dry_run=dry_run))
 
-        def on_decision(confirmed: Optional[bool]) -> None:
-            if not confirmed:
+        if yes or dry_run:
+            self._run_merge_live(dry_run=dry_run)
+            return
+
+        log.write(Text.from_markup("[bold]Apply these changes to Jira?[/] [dim]\\[y/N][/]"))
+
+        def on_answer(answer: str) -> None:
+            if answer.lower() in ("y", "yes"):
+                self._run_merge_live(dry_run=False)
+            else:
                 log.write(Text.from_markup("[yellow]merge cancelled[/yellow]"))
-                return
-            argv = ["merge", "--yes", *extra_args]
-            log.write(Text.from_markup(f"[dim]running merge…[/dim]"))
-            self._dispatch(argv, log)
-            self._suggester.refresh()
-            self._refresh_context()
 
-        self.push_screen(ConfirmScreen(
-            "Push these changes to Jira?", body,
-            confirm_label="Merge", cancel_label="Cancel",
-        ), on_decision)
+        self._pending_input = on_answer
 
-    def _merge_summary_text(self, changes) -> Text:
-        from collections import Counter
+    def _merge_preview_text(self, changes, *, dry_run: bool) -> Text:
         kinds = Counter(c.kind for c in changes)
         counts_line = ", ".join(f"[{_KIND_COLOR[k]}]{n} {k}[/]" for k, n in kinds.items())
-        body = Text.from_markup(
-            f"{len(changes)} change(s):  {counts_line}\n\n"
-            f"[dim]This will create/update/delete real Jira issues. There is no\n"
-            f"undo — but you can re-clone to refresh from Jira.[/dim]"
-        )
-        return body
+        prefix = "[bold yellow]Dry run:[/] would merge" if dry_run else "[bold]Merge:[/]"
+        return Text.from_markup(f"{prefix} {len(changes)} change(s) — {counts_line}")
+
+    def _run_merge_live(self, *, dry_run: bool) -> None:
+        """Kick off merge() on a background thread and pipe progress into the log live."""
+        log = self.query_one("#log", RichLog)
+
+        try:
+            cfg = load_config()
+        except ConfigNotFoundError as exc:
+            log.write(Text.from_markup(f"[red]merge halted:[/] {exc}"))
+            return
+
+        label = "dry run" if dry_run else "merge"
+        log.write(Text.from_markup(f"[dim]starting {label}…[/dim]"))
+
+        def worker() -> None:
+            from pm_shell.sync.push import PushError, merge as run_merge
+
+            def progress(msg: str) -> None:
+                self.call_from_thread(log.write, Text.from_markup(f"  [dim]· {msg}[/dim]"))
+
+            try:
+                outcome = run_merge(cfg, dry_run=dry_run, progress=progress)
+            except PushError as exc:
+                self.call_from_thread(log.write, Text.from_markup(f"[red]merge halted:[/] {exc}"))
+                return
+            except Exception as exc:  # noqa: BLE001 — surface any unexpected failure
+                self.call_from_thread(log.write, Text.from_markup(f"[red]merge error:[/] {exc!s}"))
+                return
+
+            self.call_from_thread(self._render_merge_outcome, outcome)
+
+        self.run_worker(worker, thread=True, exclusive=True, group="merge")
+
+    def _render_merge_outcome(self, outcome) -> None:
+        log = self.query_one("#log", RichLog)
+        for line in outcome.successes:
+            log.write(Text.from_markup(f"  [green]✓[/] {line}"))
+        for warn in outcome.warnings:
+            log.write(Text.from_markup(f"  [yellow]![/] {warn}"))
+        for label, err in outcome.failures:
+            log.write(Text.from_markup(f"  [red]✗[/] [bold]{label}:[/] {err}"))
+
+        if outcome.dry_run:
+            log.write(Text.from_markup("[dim]dry run complete — no changes made.[/dim]"))
+        elif outcome.failures:
+            log.write(Text.from_markup(
+                f"[yellow]merge finished with {len(outcome.failures)} failure(s);[/] "
+                f"see [dim].jira/.log/push-*.json[/dim]"
+            ))
+        else:
+            log.write(Text.from_markup(
+                f"[green]merge complete — {len(outcome.successes)} operation(s) applied.[/green]"
+            ))
+
+        self._suggester.refresh()
+        self._refresh_context()
 
     # ── Actions ──────────────────────────────────────────────────────────────
     def action_scroll_log_up(self) -> None:
@@ -437,7 +513,7 @@ _HELP_TEXT = Text.from_markup("""\
   [yellow]diff[/]                            opens the diff viewer (Esc to return)
   [yellow]diff KAN-5[/]                      inline diff for one item
 
-  [yellow]merge[/]                           push local changes to Jira (Yes/No modal first)
+  [yellow]merge[/]                           push local changes to Jira (inline y/n prompt, then streams progress)
     [dim]--yes[/] / [dim]-y[/]                 skip the confirmation
     [dim]--dry-run[/]                  preview the API calls without contacting Jira
   [dim]pull[/]                            sync from Jira (Phase 7 — not yet)
