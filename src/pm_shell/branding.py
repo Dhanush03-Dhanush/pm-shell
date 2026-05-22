@@ -88,9 +88,7 @@ def _status_line(
     if project is None:
         line.append("no workspace", style="yellow")
         return line
-    line.append(project, style="cyan")
     if epic_count is not None and story_count is not None:
-        line.append("  ·  ", style="dim")
         line.append(f"{epic_count} epics, {story_count} stories", style="dim")
     return line
 
