@@ -25,45 +25,30 @@ PM tools live in browser UIs that don't compose with your terminal, your editor,
 
 ## Install
 
-Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/).
-
 ```bash
 git clone <this-repo> pm-shell
 cd pm-shell
-uv tool install --editable .         # installs `pm` into ~/.local/bin
+./install.sh
 ```
 
-If you don't see `pm` on your PATH after the install, run `uv tool update-shell` and open a new terminal.
+`install.sh` is idempotent and does three things:
+
+1. Ensures [uv](https://docs.astral.sh/uv/) and a Python ≥3.11 are available (offers to install uv for you if missing).
+2. Runs `uv tool install .` so `pm` works from any directory. The source is copied into uv's tool environment (`~/.local/share/uv/tools/pm-shell/`) and a launcher is placed in `~/.local/bin/pm`, so **you can delete this repo after install and `pm` keeps working.** Pass `./install.sh --dev` to install editable instead — pm then live-tracks the checkout, useful when hacking on pm-shell itself.
+3. Prompts for your Jira `baseUrl`, `email`, and `apiToken`, then writes them to `~/.config/pm-shell/secrets.json` (chmod 600). Re-runs show the current values and ask before overwriting.
+
+Get a Jira API token first at <https://id.atlassian.com/manage-profile/security/api-tokens>. If you don't see `pm` on your PATH after the install, run `uv tool update-shell` and open a new terminal.
 
 ### First-time setup
 
-Setup is three things, done at three different cadences:
+After `./install.sh` your credentials are saved globally. The remaining two cadences:
 
 | Step | Command | When |
 |---|---|---|
-| 1. Save credentials globally | hand-edit `~/.config/pm-shell/secrets.json` | **Once per machine.** |
-| 2. Create a Jira project ("space") | `pm create` | **Once per project**, ever. Registers it in `~/.config/pm-shell/spaces.json`. |
-| 3. Mirror a space into a local workspace | `pm clone --space "<name>"` | **As many times as you want**, in any directory. |
+| Create a Jira project ("space") | `pm create` | **Once per project**, ever. Registers it in `~/.config/pm-shell/spaces.json`. |
+| Mirror a space into a local workspace | `pm clone --space "<name>"` | **As many times as you want**, in any directory. |
 
-Get a Jira API token first at <https://id.atlassian.com/manage-profile/security/api-tokens>.
-
-#### 1. Save credentials globally (once per machine)
-
-```bash
-mkdir -p ~/.config/pm-shell
-cat > ~/.config/pm-shell/secrets.json <<'EOF'
-{
-  "baseUrl":  "https://your-tenant.atlassian.net",
-  "email":    "you@example.com",
-  "apiToken": "<paste-your-token>"
-}
-EOF
-chmod 600 ~/.config/pm-shell/secrets.json
-```
-
-This file is read by `pm create` and `pm clone --space`. You write it once, then forget about it — no per-workspace secrets file needed anywhere.
-
-#### 2. Create a Jira project (once per project)
+#### Create a Jira project (once per project)
 
 ```bash
 pm create
@@ -94,7 +79,7 @@ pm spaces
 # Ops        OPS  56        2026-05-15T01:02:08
 ```
 
-#### 3. Mirror a space into a workspace (repeatable)
+#### Mirror a space into a workspace (repeatable)
 
 ```bash
 cd ~/code/my-ai-service
