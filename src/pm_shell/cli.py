@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Annotated, Optional
 
@@ -13,15 +14,28 @@ from pm_shell.commands import story as story_cmd
 from pm_shell.commands import sync as sync_cmd
 from pm_shell.commands import task as task_cmd
 from pm_shell.config import (
+    Config,
     ConfigNotFoundError,
     config_path,
     load_config,
     save_config,
     secrets_to_config,
 )
+from pm_shell.global_store import (
+    GlobalConfigError,
+    global_dir,
+    load_secrets,
+    load_spaces,
+    register_space,
+    resolve_space,
+    spaces_path,
+)
 from pm_shell.io import console, err_console
 from pm_shell.jira.client import JiraClient, JiraHTTPError
 from pm_shell.sync.clone import DirtyWorkspaceError, clone
+
+_PROJECT_KEY_RE = re.compile(r"^[A-Z][A-Z0-9]{1,9}$")
+_SCRUM_TEMPLATE = "com.pyxis.greenhopper.jira:gh-simplified-agility-scrum"
 
 app = typer.Typer(
     name="pm",
@@ -187,12 +201,24 @@ def config_init(
 
 @app.command("clone")
 def cmd_clone(
+    space: Annotated[
+        Optional[str],
+        typer.Option("--space", help="Bootstrap .jira/config.json from a space registered via `pm create`."),
+    ] = None,
     force: Annotated[
         bool,
         typer.Option("--force", help="Wipe and re-clone even if a local tree exists."),
     ] = False,
 ) -> None:
-    """Clone the configured Jira board into .jira/."""
+    """Clone the configured Jira board into .jira/.
+
+    With `--space NAME`, looks up the boardId in ~/.config/pm-shell/spaces.json,
+    writes .jira/config.json in the current directory, then clones. Pair with
+    `pm create` to bootstrap brand-new workspaces by name.
+    """
+    if space is not None:
+        _bootstrap_workspace_from_space(space, force=force)
+
     try:
         cfg = load_config()
     except ConfigNotFoundError as exc:
@@ -216,6 +242,220 @@ def cmd_clone(
         f"  tasks:    {summary['tasks']}\n"
         f"  comments: {summary['comments']}"
     )
+
+
+_POINTS_FIELD_NAMES = {"story points", "story point estimate"}
+_POINTS_FIELD_SPEC = {
+    "name": "Story Points",
+    "description": "Estimate of work for an issue (sprint planning).",
+    "type": "com.atlassian.jira.plugin.system.customfieldtypes:float",
+    "searcherKey": "com.atlassian.jira.plugin.system.customfieldtypes:exactnumber",
+}
+
+
+def _ensure_story_points_field(client: JiraClient) -> tuple[str, bool]:
+    """Make sure the tenant has a Story Points number custom field.
+
+    Returns `(field_id, created)`. Idempotent — re-running on a tenant that already
+    has the field is a single GET. The field is tenant-wide, so creating it once
+    means every team-managed project (existing and future) can use it.
+    """
+    fields = client.get("/rest/api/3/field") or []
+    for f in fields:
+        if (f.get("name") or "").lower() in _POINTS_FIELD_NAMES:
+            return f["id"], False
+
+    try:
+        result = client.post("/rest/api/3/field", json=_POINTS_FIELD_SPEC)
+    except JiraHTTPError as exc:
+        if exc.status_code in (401, 403):
+            err_console.print(
+                f"[red]Cannot create the Story Points field:[/] {exc.status_code} {exc.body}\n"
+                "Creating tenant-wide custom fields needs Jira-admin permission. "
+                "Either grant your account that permission, or create the field by hand in "
+                "Jira → Settings → Issues → Custom fields → Add (Number, name it 'Story Points')."
+            )
+            raise typer.Exit(code=2) from None
+        err_console.print(
+            f"[red]Failed to create Story Points field:[/] {exc.status_code} {exc.body}"
+        )
+        raise typer.Exit(code=1) from None
+    return result["id"], True
+
+
+def _bootstrap_workspace_from_space(space_name: str, *, force: bool) -> None:
+    """Write `.jira/config.json` in cwd from the global secrets + named space.
+
+    Refuses to overwrite an existing config unless `force=True`. The clone phase
+    that runs after this call relies on the freshly-written config.
+    """
+    try:
+        secrets = load_secrets()
+        entry = resolve_space(space_name)
+    except GlobalConfigError as exc:
+        err_console.print(f"[red]{exc}[/]")
+        raise typer.Exit(code=2) from None
+
+    target = config_path()
+    if target.exists() and not force:
+        err_console.print(
+            f"[yellow]Workspace already initialized at {target}.[/] "
+            f"Re-run with --force to overwrite from space {space_name!r}."
+        )
+        raise typer.Exit(code=1)
+
+    cfg = Config.model_validate({
+        **secrets,
+        "boardId": entry["boardId"],
+        "projectKey": entry["projectKey"],
+    })
+    save_config(cfg)
+    console.print(f"[dim]wrote {target} from space {space_name!r}[/]")
+
+
+@app.command("create")
+def cmd_create(
+    name: Annotated[
+        Optional[str],
+        typer.Option("--name", help="Display name for the space (prompted if omitted)."),
+    ] = None,
+    key: Annotated[
+        Optional[str],
+        typer.Option("--key", help="2–10 char uppercase Jira project key (prompted if omitted)."),
+    ] = None,
+    description: Annotated[
+        Optional[str],
+        typer.Option("--description", help="Project description (optional)."),
+    ] = None,
+) -> None:
+    """Create a new Jira project (a "space") and register it for `pm clone --space`.
+
+    Requires ~/.config/pm-shell/secrets.json with baseUrl, email, apiToken.
+    Hard-coded to the team-managed Scrum template — that gives you Epic / Story /
+    Task / Subtask issue types and the standard Highest..Lowest priorities.
+
+    Also guarantees the tenant has a Story Points number custom field (creates one
+    the first time, idempotent thereafter). Together that's the configuration
+    `pm merge` is built around — no follow-up Jira-UI work needed for points to
+    round-trip on stories created in the new space.
+    """
+    try:
+        secrets = load_secrets()
+    except GlobalConfigError as exc:
+        err_console.print(f"[red]{exc}[/]")
+        raise typer.Exit(code=2) from None
+
+    if name is None:
+        name = typer.prompt("Space name").strip()
+    if not name:
+        err_console.print("[red]Space name cannot be empty.[/]")
+        raise typer.Exit(code=2)
+
+    if key is None:
+        key = typer.prompt("Project key (2–10 uppercase letters/digits)").strip()
+    key = key.upper()
+    if not _PROJECT_KEY_RE.match(key):
+        err_console.print(
+            f"[red]Invalid project key {key!r}[/]: must start with a letter, "
+            "2–10 uppercase letters/digits."
+        )
+        raise typer.Exit(code=2)
+
+    existing = load_spaces()
+    if name in existing:
+        err_console.print(
+            f"[red]Space {name!r} is already registered[/] "
+            f"(key={existing[name].get('projectKey')}, boardId={existing[name].get('boardId')}). "
+            f"Pick a different name."
+        )
+        raise typer.Exit(code=1)
+
+    cfg = Config.model_validate(secrets)
+    with JiraClient(cfg) as client:
+        points_field_id, points_created = _ensure_story_points_field(client)
+        if points_created:
+            console.print(
+                f"[green]Created tenant-wide Story Points field[/] "
+                f"(id=[cyan]{points_field_id}[/]) — available to every team-managed project."
+            )
+        else:
+            console.print(f"[dim]Story Points field already exists ({points_field_id}); reusing.[/]")
+
+        lead = client.myself()["accountId"]
+        body = {
+            "key": key,
+            "name": name,
+            "projectTypeKey": "software",
+            "projectTemplateKey": _SCRUM_TEMPLATE,
+            "leadAccountId": lead,
+            "assigneeType": "UNASSIGNED",
+        }
+        if description:
+            body["description"] = description
+
+        try:
+            project = client.post("/rest/api/3/project", json=body)
+        except JiraHTTPError as exc:
+            err_console.print(f"[red]Jira refused project creation:[/] {exc.status_code} {exc.body}")
+            raise typer.Exit(code=1) from None
+
+        boards = client.get(
+            "/rest/agile/1.0/board", params={"projectKeyOrId": project["key"]}
+        ).get("values") or []
+        board_id = boards[0]["id"] if boards else None
+
+    if board_id is None:
+        err_console.print(
+            f"[yellow]Project {project['key']} created but no board was auto-provisioned.[/] "
+            "Create one in the Jira UI, then add the entry to ~/.config/pm-shell/spaces.json by hand."
+        )
+        raise typer.Exit(code=1)
+
+    register_space(name, project_key=project["key"], board_id=board_id)
+    console.print()
+    console.print(
+        f"[green]Created space[/] [bold]{name}[/] "
+        f"(key=[cyan]{project['key']}[/], boardId=[cyan]{board_id}[/])"
+    )
+    console.print(f"[dim]registered in {spaces_path()}[/]")
+    console.print()
+    console.print("Next:")
+    console.print(f"  cd ~/some/workspace")
+    console.print(f"  pm clone --space {name!r}")
+
+
+@app.command("spaces")
+def cmd_spaces() -> None:
+    """List the Jira spaces registered for this machine."""
+    try:
+        spaces = load_spaces()
+    except GlobalConfigError as exc:
+        err_console.print(f"[red]{exc}[/]")
+        raise typer.Exit(code=1) from None
+
+    if not spaces:
+        console.print(
+            f"[dim]No spaces registered yet.[/] "
+            f"Run [bold]pm create[/] to make one (registry: {spaces_path()})."
+        )
+        return
+
+    from rich.table import Table
+    table = Table(show_header=True, header_style="bold", box=None, padding=(0, 1))
+    table.add_column("NAME", no_wrap=True)
+    table.add_column("KEY", no_wrap=True, style="cyan")
+    table.add_column("BOARD ID", no_wrap=True, style="cyan")
+    table.add_column("CREATED", style="dim")
+    for name in sorted(spaces):
+        entry = spaces[name]
+        table.add_row(
+            name,
+            str(entry.get("projectKey", "?")),
+            str(entry.get("boardId", "?")),
+            (entry.get("createdAt", "") or "")[:19],
+        )
+    console.print(table)
+    console.print(f"[dim]source: {spaces_path()}[/]")
 
 
 @app.command("whoami")

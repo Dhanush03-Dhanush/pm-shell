@@ -25,42 +25,86 @@ PM tools live in browser UIs that don't compose with your terminal, your editor,
 
 ## Install
 
-Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/).
-
 ```bash
 git clone <this-repo> pm-shell
 cd pm-shell
-uv tool install --editable .         # installs `pm` into ~/.local/bin
+./install.sh
 ```
 
-If you don't see `pm` on your PATH after the install, run `uv tool update-shell` and open a new terminal.
+`install.sh` is idempotent and does three things:
+
+1. Ensures [uv](https://docs.astral.sh/uv/) and a Python ≥3.11 are available (offers to install uv for you if missing).
+2. Runs `uv tool install .` so `pm` works from any directory. The source is copied into uv's tool environment (`~/.local/share/uv/tools/pm-shell/`) and a launcher is placed in `~/.local/bin/pm`, so **you can delete this repo after install and `pm` keeps working.** Pass `./install.sh --dev` to install editable instead — pm then live-tracks the checkout, useful when hacking on pm-shell itself.
+3. Prompts for your Jira `baseUrl`, `email`, and `apiToken`, then writes them to `~/.config/pm-shell/secrets.json` (chmod 600). Re-runs show the current values and ask before overwriting.
+
+Get a Jira API token first at <https://id.atlassian.com/manage-profile/security/api-tokens>. If you don't see `pm` on your PATH after the install, run `uv tool update-shell` and open a new terminal.
 
 ### First-time setup
 
-In any directory where you want a Jira mirror (typically your project root):
+After `./install.sh` your credentials are saved globally. The remaining two cadences:
+
+| Step | Command | When |
+|---|---|---|
+| Create a Jira project ("space") | `pm create` | **Once per project**, ever. Registers it in `~/.config/pm-shell/spaces.json`. |
+| Mirror a space into a local workspace | `pm clone --space "<name>"` | **As many times as you want**, in any directory. |
+
+#### Create a Jira project (once per project)
 
 ```bash
-# 1. Create a secrets file (don't commit this)
-cat > jira-secrets.json <<'EOF'
-{
-  "baseUrl": "https://your-tenant.atlassian.net",
-  "email": "you@company.com",
-  "apiToken": "<your Atlassian API token>",
-  "boardId": 1
-}
-EOF
-
-# 2. Bootstrap the workspace (writes .jira/config.json with chmod 600)
-pm config init --from jira-secrets.json
-
-# 3. Pull the board
-pm clone
-
-# 4. Open the interactive shell
-pm
+pm create
+# Space name: AI Board
+# Project key (2–10 uppercase letters/digits): AI
 ```
 
-Get a Jira API token at <https://id.atlassian.com/manage-profile/security/api-tokens>. `boardId` is the integer in the URL when you view a board (e.g. `/jira/software/projects/KAN/boards/1`).
+What this does:
+
+1. Ensures a tenant-wide `Story Points` number custom field exists (creates it the first time you run `pm create`, no-ops thereafter). This is a one-time per-tenant action; once it's there, every team-managed project — including the one we're about to create — gets it automatically.
+2. POSTs `/rest/api/3/project` with the team-managed Scrum template, so the project comes pre-loaded with `Epic / Story / Task / Subtask` issue types, `Highest..Lowest` priorities, and the `To Do / In Progress / Done` workflow.
+3. Records the resulting `{name → boardId, projectKey}` mapping in `~/.config/pm-shell/spaces.json`.
+
+The Story-Points step needs Jira-admin permission. If your account doesn't have it, `pm create` fails with a clear pointer at the Jira UI path you'd need to use instead — no half-created project gets left behind.
+
+You can also pass flags non-interactively:
+
+```bash
+pm create --name "AI Board" --key AI --description "AI-team work"
+```
+
+To see what's registered:
+
+```bash
+pm spaces
+# NAME       KEY  BOARD ID  CREATED
+# AI Board   AI   42        2026-05-14T23:55:11
+# Ops        OPS  56        2026-05-15T01:02:08
+```
+
+#### Mirror a space into a workspace (repeatable)
+
+```bash
+cd ~/code/my-ai-service
+pm clone --space "AI Board"
+pm                              # open the interactive shell
+```
+
+`pm clone --space "AI Board"` looks up the boardId in `~/.config/pm-shell/spaces.json`, writes `.jira/config.json` in the current directory by combining the global secrets with that space's `boardId`/`projectKey`, then clones. Repeat in as many directories as you want — each one is an independent local mirror, and they all push to the same Jira space on `pm merge`.
+
+> ⚠ pm-shell has no merge-conflict detection — last-write-wins. If you maintain two workspaces against the same space, treat them as serial (push-then-`pm clone --force` elsewhere), not concurrent.
+
+#### Alternative — point at an existing Jira board
+
+If you already have a Jira board outside this flow (your team's, or a project somebody else created):
+
+```bash
+cd ~/code/some-project
+cat > jira-secrets.json <<'EOF'
+{ "baseUrl": "...", "email": "...", "apiToken": "...", "boardId": 7 }
+EOF
+pm config init --from jira-secrets.json && rm jira-secrets.json
+pm clone
+```
+
+`pm merge` auto-detects the project's issue-type names, priority map, and Story Points field on push, so existing boards work — but a project lacking an issue type literally named `Story` is the main rough edge today (see Known limits).
 
 ---
 
@@ -399,7 +443,9 @@ These are documented limits, not bugs. Each has a planned solution but isn't bui
 - **No conflict detection on `merge`** — last-write-wins. Safe for solo workspaces; collaborative use needs a re-fetch-before-write pass.
 - **Sub-task modifications / deletions** are not pushed by `merge` — only new sub-tasks are created. Re-titling or status-changing an existing sub-task locally won't sync.
 - **Assignee email → accountId** uses Jira's `/user/search`. No match means the field is sent as `null` with a warning in the merge outcome.
-- **Story points** is hardcoded to `customfield_10016` (Jira Cloud's default). Tenants on a custom ID need a `customFieldMap` in config (not yet built).
+- **Story points** field ID is auto-detected per merge (looks for the field named "Story Points" or "Story point estimate"). `pm create` provisions this field tenant-wide on first use, so spaces created through the CLI always have it. For workspaces pointed at boards you didn't create (the "Alternative" setup path), if the project has no points field the value is skipped with a single warning rather than failing the push.
+- **Issue-type names** (`Story` / `Task` / `User Story` / etc) are project-specific. The bundled spec creates a project that has `Story`, which is what the CLI's local records use. Pointing pm-shell at an arbitrary existing project that lacks an issue type literally called `Story` is the main rough edge today.
+- **Cloned-priority round-trip**: the workspace stores priority as the lowercased Jira name (e.g. `"highest"`), but the CLI's canonical set is `low/medium/high/critical`. A story originally cloned with priority `Highest` can't currently be edited through the CLI and pushed back — `merge` will skip the field with a warning.
 - **`pm pull` (incremental refresh)** isn't implemented yet. To re-sync, run `pm clone --force` (which wipes any unpushed local edits).
 
 ---
