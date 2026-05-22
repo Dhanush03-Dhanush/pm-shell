@@ -26,6 +26,7 @@ from textual.suggester import Suggester
 from textual.widgets import Footer, Input, RichLog, Static
 
 from pm_shell import __version__
+from pm_shell.branding import banner as _render_banner, project_from_url
 from pm_shell.config import ConfigNotFoundError, load_config, workspace_dir
 from pm_shell.io import console, err_console
 from pm_shell.shell.completion import PMCompleter
@@ -137,16 +138,12 @@ class PMShell(App):
         log = self.query_one("#log", RichLog)
         try:
             cfg = load_config()
-            project = _project_from_url(cfg.base_url)
-            log.write(Text.from_markup(
-                f"[bold]pm-shell {__version__}[/]  ·  [cyan]{project}[/]\n"
-                f"[dim]type `help` for commands, Ctrl-D to exit[/]"
+            log.write(_render_banner(
+                version=__version__,
+                project=project_from_url(cfg.base_url),
             ))
         except ConfigNotFoundError:
-            log.write(Text.from_markup(
-                f"[bold]pm-shell {__version__}[/]  ·  [yellow]no workspace[/]\n"
-                "[dim]Run `config init --from <secrets.json>` then `clone` to get started.[/]"
-            ))
+            log.write(_render_banner(version=__version__))
         self.query_one("#prompt", Input).focus()
         self._refresh_context()
 
@@ -523,13 +520,6 @@ _HELP_TEXT = Text.from_markup("""\
   PgUp[dim]/[/]PgDn  scroll output            wheel    scroll output (mouse)
   Ctrl-D[dim]/[/]exit  quit              [dim]`clear` empties the output log[/]
   [dim]Append --help to any command for the full flag list.[/]""")
-
-
-def _project_from_url(base_url: str) -> str:
-    try:
-        return base_url.split("//", 1)[-1].split(".", 1)[0]
-    except (IndexError, AttributeError):
-        return "?"
 
 
 def _collect_known_commands(typer_app: "typer.Typer") -> set[str]:

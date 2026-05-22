@@ -10,6 +10,7 @@ from prompt_toolkit import PromptSession
 from prompt_toolkit.formatted_text import FormattedText
 
 from pm_shell import __version__
+from pm_shell.branding import banner as _render_banner, project_from_url
 from pm_shell.config import ConfigNotFoundError, load_config, workspace_dir
 from pm_shell.io import console, err_console
 from pm_shell.shell.completion import PMCompleter
@@ -80,18 +81,8 @@ def _banner() -> None:
     try:
         cfg = load_config()
     except ConfigNotFoundError:
-        console.print(
-            f"[bold]pm-shell {__version__}[/]  ·  [yellow]no workspace[/]\n"
-            "[dim]Run `config init --from <secrets.json>` then `clone` to get started.[/]"
-        )
+        console.print(_render_banner(version=__version__))
         return
-
-    project = "?"
-    if cfg.base_url:
-        try:
-            project = cfg.base_url.split("//", 1)[-1].split(".", 1)[0]
-        except (IndexError, AttributeError):
-            pass
 
     epic_count = story_count = 0
     try:
@@ -101,11 +92,12 @@ def _banner() -> None:
     except Exception:
         pass
 
-    console.print(
-        f"[bold]pm-shell {__version__}[/]  ·  [cyan]{project}[/]  "
-        f"·  {epic_count} epics, {story_count} stories"
-    )
-    console.print("[dim]type `help` for commands, `exit` to quit[/]")
+    console.print(_render_banner(
+        version=__version__,
+        project=project_from_url(cfg.base_url),
+        epic_count=epic_count,
+        story_count=story_count,
+    ))
 
 
 def _dispatch(app: "typer.Typer", argv: list[str]) -> None:
