@@ -1,29 +1,37 @@
-# Claude Code skill — pm-shell
+# Claude Code skills — pm-shell
 
-A skill that teaches Claude Code when and how to drive the `pm` CLI for any repo with a `.jira/` directory.
+Two skills that teach Claude Code how to drive the `pm` CLI for any repo with a `.jira/` directory. They're split by intent so Claude loads only the one relevant to the current task:
 
-## Installing
+| Skill | When it activates |
+|---|---|
+| [`pm-refine`](pm-refine/SKILL.md) | Planning — creating epics, stories, tasks; breaking down features; scaffolding a backlog |
+| [`pm-work`](pm-work/SKILL.md) | Implementation — updating status as work progresses, logging decisions/gotchas to comments, closing stories |
 
-Copy the skill into your global Claude Code skills directory:
+Each skill detects its trigger from the user's wording (e.g. *"let's plan auth"* → `pm-refine`, *"implement KAN-5"* → `pm-work`) and from whether `.jira/` exists in or above the current directory.
+
+## Install (global — all repos)
 
 ```bash
-mkdir -p ~/.claude/skills/pm-shell
-cp skills/pm-shell/SKILL.md ~/.claude/skills/pm-shell/SKILL.md
+mkdir -p ~/.claude/skills/pm-refine ~/.claude/skills/pm-work
+cp skills/pm-refine/SKILL.md  ~/.claude/skills/pm-refine/SKILL.md
+cp skills/pm-work/SKILL.md    ~/.claude/skills/pm-work/SKILL.md
 ```
 
-That's it — next time Claude Code starts, it'll pick the skill up automatically. Claude invokes it whenever a workspace contains `.jira/` or the user references Jira keys (`KAN-5`, `PROJ-12`, etc.).
+Claude picks them up on the next session.
 
-## What it does
+## Install (per-project)
 
-- Reads `.jira/epics/<EPIC>/<STORY>/story.json` for acceptance criteria and `tasks.json` for the subtask checklist.
-- Marks tasks/stories done via `pm task done N` / `pm done` as work progresses.
-- Adds working comments with `pm comment add "..."` to leave a trail.
-- During refinement, scaffolds new epics/stories via `pm epic create` / `pm story create` based on user requirements.
-- Surfaces local changes with `pm status` and `pm diff` before any push.
-- **Never** runs `pm merge` unprompted — merge requires explicit user approval.
+Drop them inside the target repo instead of `~/.claude/`:
 
-See `pm-shell/SKILL.md` for the full body Claude reads.
+```bash
+mkdir -p .claude/skills/pm-refine .claude/skills/pm-work
+cp /path/to/pm-shell/skills/pm-refine/SKILL.md .claude/skills/pm-refine/SKILL.md
+cp /path/to/pm-shell/skills/pm-work/SKILL.md   .claude/skills/pm-work/SKILL.md
+```
 
-## Per-project install
+## What they do (in one line each)
 
-If you only want this skill active in one repo (rather than globally), drop it at `<repo>/.claude/skills/pm-shell/SKILL.md` instead of `~/.claude/skills/`.
+- **`pm-refine`** — asks 1–2 clarifying questions for vague requests, scaffolds epics/stories/tasks following INVEST and a title style guide, never invents acceptance criteria, never auto-estimates story points.
+- **`pm-work`** — reads story + tasks + comments before coding, marks tasks done as it works, logs important context to comments using a `[decision]` / `[constraint]` / `[gotcha]` / `[deferred]` / `[ref]` taxonomy, summarizes before any `pm merge`.
+
+Both skills **never run `pm merge` unprompted** — push to Jira always requires explicit user approval.
