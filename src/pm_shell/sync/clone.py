@@ -163,9 +163,6 @@ def clone(
 
 
 def _wipe_tree_for_clone(*, force: bool) -> None:
-    """When force-re-cloning, remove the on-disk tree (epics/, unparented/, .baseline/).
-    config.json is preserved.
-    """
     if not force:
         return
     import shutil

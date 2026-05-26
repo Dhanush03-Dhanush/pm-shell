@@ -1,27 +1,8 @@
-"""Push local workspace changes to Jira (Phase 6).
+"""Push local workspace changes to Jira.
 
-Walks `.jira/` for items marked `_unpushed`, `_deleted`, or modified vs. baseline,
-and replays them via the Jira REST API. After each successful operation, local
-state is updated so the workspace matches Jira (real keys replace NEW-* placeholders,
-baselines refresh, `_unpushed`/`_deleted` markers are removed).
-
-Operation order matters and reflects real-world dependencies:
-
-    1. Create new epics                 (so child stories can reference real keys)
-    2. Create new stories               (parent epic key, possibly just created, resolved)
-    3. Create new sub-tasks             (parent story key, possibly just created, resolved)
-    4. Update existing epics/stories    (fields via PUT, status via /transitions)
-    5. Post new comments
-    6. Delete stories (then epics)      (Jira refuses to delete an epic with child issues)
-
-Limitations (v1):
-    - No conflict detection: we don't re-fetch and compare baselines before
-      writing. Last-write-wins. For solo workspaces this is fine; collaborative
-      use needs a later phase.
-    - Sub-task modifications and deletions are not handled. Tasks are
-      append-and-flip-done in practice; full edit support is a follow-up.
-    - Assignee/owner: we resolve email → accountId via /user/search. If no
-      match, the field is sent as null and a warning lands in the outcome.
+Order: create epics → stories → sub-tasks → update issues → comments → delete
+stories → delete epics. (Jira refuses to delete an epic with child issues, and
+children need their parent's real key once NEW-* placeholders resolve.)
 """
 
 from __future__ import annotations
@@ -63,13 +44,8 @@ def _noop(_: str) -> None:
     pass
 
 
-# ── Outcome record ──────────────────────────────────────────────────────────
-
-
 @dataclass
 class PushOutcome:
-    """What merge() did. Suitable for printing and for the .jira/.log entry."""
-
     successes: list[str] = field(default_factory=list)
     failures: list[tuple[str, str]] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
@@ -91,36 +67,21 @@ class PushOutcome:
         return len(self.successes) + len(self.failures)
 
 
-# ── Per-merge context ───────────────────────────────────────────────────────
-
-
 @dataclass
 class _Context:
-    """Mutable state threaded through every push operation."""
-
     client: JiraClient
     project_key: str
     status_map: dict[str, Optional[str]]
     accountid_cache: dict[str, Optional[str]] = field(default_factory=dict)
-    # NEW-1 → KAN-99 once the parent has landed; used to rewrite story.epic refs.
+    # NEW-1 → KAN-99 after the parent lands; used to rewrite story.epic refs.
     new_key_map: dict[str, str] = field(default_factory=dict)
-    # Local keys whose parent issue was created (or, in dry-run, would have been
-    # created) earlier in this merge. Lets child phases preview their work even
-    # though the on-disk `_unpushed` flag is still set in dry-run mode.
+    # Issues created (or, in dry-run, planned) this merge — lets child phases
+    # proceed even though `_unpushed` is still set on disk in dry-run.
     created_keys: set[str] = field(default_factory=set)
-    # Story Points field ID for this tenant. Different Jira projects assign different
-    # custom-field IDs (commonly customfield_10016 in classic scrum, 10026 in team-managed,
-    # absent entirely in basic kanban). Resolved lazily and cached for the merge.
     points_field_id: Optional[str] = None
     points_field_resolved: bool = False
-    # canonical priority (low/medium/high/critical) → Jira priority display name
-    # ("Low"/"High"/"Highest"/...). Resolved lazily from /rest/api/3/priority since
-    # tenants vary (some use Highest..Lowest, some use Critical..Trivial, some custom).
     priority_map: dict[str, str] = field(default_factory=dict)
     priority_map_resolved: bool = False
-
-
-# ── Public entry point ──────────────────────────────────────────────────────
 
 
 def merge(
@@ -160,9 +121,6 @@ def merge(
     return outcome
 
 
-# ── Phases ──────────────────────────────────────────────────────────────────
-
-
 def _phase_create_epics(ctx: _Context, outcome: PushOutcome, dry_run: bool, progress: ProgressFn) -> None:
     for edir, record in _iter_epics():
         if record.get("_unpushed") and not record.get("_deleted"):
@@ -177,9 +135,6 @@ def _phase_create_stories(ctx: _Context, outcome: PushOutcome, dry_run: bool, pr
 
 def _phase_create_subtasks(ctx: _Context, outcome: PushOutcome, dry_run: bool, progress: ProgressFn) -> None:
     for sdir, story, _ in _iter_stories(skip_deleted=True):
-        # Skip subtasks whose parent story never made it to Jira (or whose creation
-        # failed this run). `created_keys` covers the dry-run case where the parent
-        # was previewed but `_unpushed` is still on disk.
         if story.get("_unpushed") and story["key"] not in ctx.created_keys:
             continue
         tasks_path = sdir / "tasks.json"
@@ -210,8 +165,6 @@ def _phase_update_issues(ctx: _Context, outcome: PushOutcome, dry_run: bool, pro
 
 def _phase_create_comments(ctx: _Context, outcome: PushOutcome, dry_run: bool, progress: ProgressFn) -> None:
     for sdir, story, _ in _iter_stories(skip_deleted=True):
-        # Same logic as the subtask phase: skip only when the parent story isn't in
-        # Jira yet (i.e., its creation didn't happen / wasn't planned this run).
         if story.get("_unpushed") and story["key"] not in ctx.created_keys:
             continue
         path = sdir / "comments.json"
@@ -234,9 +187,6 @@ def _phase_delete_epics(ctx: _Context, outcome: PushOutcome, dry_run: bool, prog
     for edir, record in _iter_epics(include_deleted=True):
         if record.get("_deleted") and not record.get("_unpushed"):
             _push_delete_issue(ctx, edir, record, "epic", outcome, dry_run, progress)
-
-
-# ── Operations ──────────────────────────────────────────────────────────────
 
 
 def _push_create_epic(
@@ -380,7 +330,6 @@ def _push_update_issue(
         outcome.fail(label, _format_http_error(exc))
         return
 
-    # Refresh baseline + on-disk fields after the round-trip.
     fetched = _fetch_issue(ctx.client, key)
     if fetched:
         atomic_write_json(baseline_dir() / f"{key}.json", fetched)
@@ -439,7 +388,6 @@ def _push_delete_issue(
         outcome.fail(label, _format_http_error(exc))
         return
 
-    # Local cleanup
     shutil.rmtree(item_dir)
     bpath = baseline_dir() / f"{key}.json"
     if bpath.exists():
@@ -449,17 +397,11 @@ def _push_delete_issue(
     outcome.ok(f"deleted {kind} {key}")
 
 
-# ── Helpers: payloads ───────────────────────────────────────────────────────
-
-
 def _build_create_fields(
     record: dict, ctx: _Context, *, issue_type: str, parent: Optional[dict], outcome: PushOutcome,
 ) -> dict[str, Any]:
-    """Build a Jira REST v3 `fields` payload for POST /rest/api/3/issue.
-
-    Status is intentionally excluded — Jira always lands new issues in the project's
-    default status and a separate /transitions call is required afterwards.
-    """
+    # Status is excluded — Jira lands new issues in the project default, then
+    # a separate /transitions call moves them.
     fields: dict[str, Any] = {
         "project": {"key": ctx.project_key},
         "issuetype": {"name": issue_type},
@@ -489,8 +431,6 @@ def _build_create_fields(
 
 
 def _build_update_fields(record: dict, ctx: _Context, *, outcome: PushOutcome) -> dict[str, Any]:
-    """Build a PUT payload from the current local record. Status is sent separately
-    via /transitions; see `_apply_transition`."""
     fields: dict[str, Any] = {"summary": (record.get("summary") or "").strip()}
     if record.get("priority"):
         jira_name = _resolve_priority_name(ctx, record["priority"], outcome)
@@ -525,8 +465,7 @@ def _assignee_account_id(record: dict, ctx: _Context, outcome: PushOutcome) -> O
 
 _POINTS_FIELD_NAMES = {"story points", "story point estimate"}
 
-# Per canonical priority, the Jira display names we'll accept (case-insensitive),
-# ordered by preference. The first one that exists in the tenant wins.
+# Per canonical priority, accepted Jira names in preference order; first match wins.
 _PRIORITY_PREFERENCES: dict[str, tuple[str, ...]] = {
     "critical": ("highest", "critical", "blocker"),
     "high": ("high", "major"),
@@ -536,11 +475,6 @@ _PRIORITY_PREFERENCES: dict[str, tuple[str, ...]] = {
 
 
 def _resolve_priority_name(ctx: _Context, canonical: str, outcome: PushOutcome) -> Optional[str]:
-    """Translate a canonical priority into the Jira name configured for this tenant.
-
-    Cached for the merge. Returns None when the tenant exposes no priority that we
-    can map to (uncommon — basic projects always have at least Low/Medium/High).
-    """
     if not ctx.priority_map_resolved:
         ctx.priority_map_resolved = True
         try:
@@ -562,12 +496,6 @@ def _resolve_priority_name(ctx: _Context, canonical: str, outcome: PushOutcome) 
 
 
 def _resolve_points_field_id(ctx: _Context, outcome: PushOutcome) -> Optional[str]:
-    """Look up the Story Points custom-field ID for this tenant, cached for the merge.
-
-    Returns the field ID (e.g. ``customfield_10026``), or None if the project has no
-    Story Points field at all (common for basic Kanban templates). In the missing
-    case we warn once so the user understands why their `--points` edits no-op.
-    """
     if ctx.points_field_resolved:
         return ctx.points_field_id
 
@@ -590,9 +518,6 @@ def _resolve_points_field_id(ctx: _Context, outcome: PushOutcome) -> Optional[st
     return None
 
 
-# ── Helpers: transitions, users, baselines ──────────────────────────────────
-
-
 def _apply_transition(ctx: _Context, key: str, canonical_status: str, outcome: PushOutcome) -> None:
     target_name = ctx.status_map.get(canonical_status)
     if not target_name:
@@ -605,9 +530,7 @@ def _apply_transition(ctx: _Context, key: str, canonical_status: str, outcome: P
         None,
     )
     if match is None:
-        # No path → either already in that state (Jira hides self-transitions) or the
-        # workflow truly doesn't allow it. The first case is a no-op, the second is
-        # surfaceable but rare; warn and move on either way.
+        # Already in target state (Jira hides self-transitions) or workflow forbids it.
         outcome.warn(f"{key}: no available transition lands on {target_name!r}; skipped")
         return
 
@@ -620,12 +543,6 @@ def _apply_transition(ctx: _Context, key: str, canonical_status: str, outcome: P
 def _transition_after_create(
     ctx: _Context, key: str, canonical_status: Optional[str], outcome: PushOutcome,
 ) -> None:
-    """Move a freshly-created issue into the desired canonical status if it isn't already.
-
-    Jira always lands new issues in the project's default status (typically "To Do"),
-    so a `pm epic create … --status in-progress` flow needs an explicit transition
-    after the POST or the local intent is silently lost.
-    """
     if not canonical_status:
         return
     try:
@@ -635,7 +552,6 @@ def _transition_after_create(
 
 
 def _resolve_project_key(client: JiraClient, config: Config) -> str:
-    """Fetch projectKey from the board if it wasn't persisted during clone."""
     if not config.board_id:
         raise PushError("config has no boardId — cannot resolve project. Run `clone` first.")
     board = client.get_board(config.board_id)
@@ -646,7 +562,6 @@ def _resolve_project_key(client: JiraClient, config: Config) -> str:
 
 
 def _resolve_account_id(ctx: _Context, email: str, outcome: Optional[PushOutcome]) -> Optional[str]:
-    """Email → accountId via /user/search, cached per merge."""
     if email in ctx.accountid_cache:
         return ctx.accountid_cache[email]
     try:
@@ -671,16 +586,13 @@ def _baseline_record(key: str, kind: str, ctx: _Context, *, epic_key: Optional[s
 
 
 def _needs_update(current: dict, baseline: Optional[dict]) -> bool:
-    """Treat missing keys and None values as equivalent so older clone schemas
-    (e.g. records written before `points` was tracked) don't read as 'modified'.
-    """
+    # Older schemas may lack keys current writes set to None — treat as equivalent.
     if baseline is None:
         return False
     return _normalize(current) != _normalize(baseline)
 
 
 def _normalize(d: dict) -> dict:
-    """Drop keys whose values are None or empty containers — they're equivalent to absent."""
     return {k: v for k, v in d.items() if v not in (None, [], {}, "")}
 
 
@@ -689,9 +601,6 @@ def _fetch_issue(client: JiraClient, key: str) -> Optional[dict[str, Any]]:
         return client.get_issue(key)
     except JiraHTTPError:
         return None
-
-
-# ── Helpers: workspace walk ─────────────────────────────────────────────────
 
 
 def _iter_epics(*, include_deleted: bool = False):
@@ -711,11 +620,7 @@ def _iter_epics(*, include_deleted: bool = False):
 
 
 def _iter_stories(*, skip_deleted: bool = False):
-    """Yields `(story_dir, story_record, epic_dir_or_None)` for every story on disk.
-
-    Tombstoned (`_deleted`) records are yielded by default — the delete phase needs
-    them — and callers that don't want them pass `skip_deleted=True`.
-    """
+    # Tombstoned (`_deleted`) records are yielded by default — the delete phase needs them.
     def _emit(sdir: Path, edir: Optional[Path]):
         spath = sdir / "story.json"
         if not spath.exists():
@@ -747,14 +652,7 @@ def _iter_stories(*, skip_deleted: bool = False):
                 yield result
 
 
-# ── Helpers: post-create local renames ──────────────────────────────────────
-
-
 def _adopt_real_key(item_dir: Path, json_filename: str, old_key: str, real_key: str, ctx: _Context) -> Path:
-    """Rename the item dir to the real Jira key, refresh the record file, write baseline.
-
-    Returns the (possibly renamed) directory path.
-    """
     record_path = item_dir / json_filename
     record = read_json(record_path)
     record["key"] = real_key
@@ -777,9 +675,6 @@ def _adopt_real_key(item_dir: Path, json_filename: str, old_key: str, real_key: 
         item_dir.rename(new_dir)
         return new_dir
     return item_dir
-
-
-# ── Helpers: errors, time, logging ──────────────────────────────────────────
 
 
 def _format_http_error(exc: JiraHTTPError) -> str:

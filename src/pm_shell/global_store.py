@@ -1,18 +1,7 @@
 """Machine-global pm-shell state at ~/.config/pm-shell/.
-
-Two files live here, both used by `pm create` and `pm clone --space`:
-
-  - `secrets.json` — shared Jira credentials (baseUrl, email, apiToken). Written
-    once per machine; every workspace inherits it.
-  - `spaces.json`  — registry of Jira projects you've created or use, keyed by
-    display name. Maps `"AI Board"` to its `projectKey` + `boardId` so workspaces
-    can be set up by name instead of remembering integers.
-
-These are deliberately separate from the per-workspace `.jira/config.json`, which
-bundles credentials + a single project into one file. The global store keeps
-secrets in one place and lets `pm clone --space NAME` write the per-workspace
-config on demand.
-"""
+`secrets.json` holds shared Jira creds; `spaces.json` maps display names to
+projectKey+boardId. Kept separate from per-workspace `.jira/config.json` so
+`pm clone --space NAME` can write it on demand."""
 
 from __future__ import annotations
 
@@ -33,7 +22,6 @@ class GlobalConfigError(RuntimeError):
 
 
 def global_dir() -> Path:
-    """Resolve `$XDG_CONFIG_HOME/pm-shell` or fall back to `~/.config/pm-shell`."""
     base = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
     return Path(base) / "pm-shell"
 
@@ -93,8 +81,7 @@ def register_space(name: str, *, project_key: str, board_id: int) -> None:
 
 
 def resolve_space(name: str) -> dict[str, Any]:
-    """Look up a registered space by display name. Exact match wins; otherwise
-    fall back to case-insensitive when it's unambiguous."""
+    # Exact match wins; case-insensitive fallback when unambiguous.
     spaces = load_spaces()
     if name in spaces:
         return spaces[name]

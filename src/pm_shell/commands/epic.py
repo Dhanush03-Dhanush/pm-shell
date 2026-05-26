@@ -157,10 +157,8 @@ def epic_create(
 def epic_delete(
     key: Annotated[Optional[str], typer.Argument(help="Epic key. Inferred from cwd if omitted.")] = None,
 ) -> None:
-    """Mark an epic and its child stories for deletion. Executed on next `push`.
-
-    Unpushed (NEW-*) epics are removed immediately since they don't exist in Jira yet.
-    """
+    """Mark an epic and its child stories for deletion (applied on next `push`).
+    Unpushed (NEW-*) epics are removed immediately."""
     import shutil
 
     from pm_shell.commands._mutate import load_and_save_story

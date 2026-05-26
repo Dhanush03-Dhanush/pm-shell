@@ -16,8 +16,7 @@ class ConfigNotFoundError(RuntimeError):
 
 
 class Config(BaseModel):
-    """User credentials and per-workspace state. Serialized as camelCase JSON to match the spec."""
-
+    # Serialized as camelCase JSON to match the spec.
     model_config = ConfigDict(populate_by_name=True, extra="allow")
 
     base_url: str = Field(alias="baseUrl")
@@ -31,11 +30,7 @@ class Config(BaseModel):
 
 
 def find_workspace_root(start: Optional[Path] = None) -> Path:
-    """Walk up from `start` (or cwd) looking for a `.jira/` directory.
-
-    Returns the directory that contains `.jira/`. If none is found, returns `start`
-    (so `pm config init` from a fresh repo creates `.jira/` in the current directory).
-    """
+    # Falls back to `start` when no `.jira/` ancestor is found — so a fresh `config init` works.
     cur = (start or Path.cwd()).resolve()
     for candidate in [cur, *cur.parents]:
         if (candidate / WORKSPACE_DIRNAME).is_dir():
@@ -71,9 +66,6 @@ def save_config(cfg: Config, start: Optional[Path] = None) -> Path:
 
 
 def secrets_to_config(secrets_path: Path) -> Config:
-    """Load a JSON secrets file and validate it into a Config.
-
-    Accepts both camelCase (baseUrl, apiToken, boardId) and snake_case keys.
-    """
+    # Accepts both camelCase and snake_case keys.
     data = json.loads(secrets_path.read_text())
     return Config.model_validate(data)

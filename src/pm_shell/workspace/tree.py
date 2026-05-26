@@ -26,10 +26,7 @@ def iter_epic_dirs() -> Iterator[Path]:
 
 
 def iter_story_dirs(epic_key: Optional[str] = None) -> Iterator[Path]:
-    """Yield story directories. If epic_key is given, only that epic's stories.
-
-    With no epic_key, yields stories under all epics plus unparented/.
-    """
+    # No epic_key → walks every epic plus unparented/.
     if epic_key is not None:
         epic_dir = find_epic_dir(epic_key)
         if epic_dir is None:

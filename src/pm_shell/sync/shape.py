@@ -1,10 +1,5 @@
-"""Raw Jira payload → workspace shape converters.
-
-Used by both `clone` (writing fresh epic.json / story.json / tasks.json / comments.json)
-and `diff` (re-deriving the baseline shape from the stored raw payload at compare-time).
-Keeping the conversion in one place ensures clone and diff agree on what fields end up
-in the workspace.
-"""
+"""Raw Jira payload → workspace shape converters. Shared by clone and diff so
+both agree on the on-disk shape."""
 
 from __future__ import annotations
 
@@ -24,7 +19,6 @@ def user_record(user: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
 
 
 def canonicalize_status(status_name: str, status_map: StatusMap) -> Optional[str]:
-    """Map a Jira status name (e.g. 'In Progress') to canonical (todo|in-progress|done|blocked)."""
     if not status_name:
         return None
     target = status_name.lower()
@@ -71,9 +65,7 @@ def story_shape(
         "assignee": user_record(fields.get("assignee")),
         "labels": fields.get("labels") or [],
         "epic": epic_key,
-        # Story Points is a custom field in Jira Cloud; `customfield_10016` is the
-        # default ID in the standard scrum/kanban templates. If the tenant uses a
-        # different field, this stays None until push (Phase 6) resolves the mapping.
+        # Default scrum/kanban template ID; push resolves the actual field for other tenants.
         "points": fields.get("customfield_10016"),
         "description": fields.get("description"),
         "created": fields.get("created"),

@@ -1,24 +1,10 @@
 #!/usr/bin/env bash
 #
-# pm-shell installer.
-#
-# One script, three jobs:
-#   1. Make sure uv (and a compatible Python) are available.
-#   2. Install the `pm` CLI globally from this checkout. The source is copied
-#      into uv's tool environment, so `pm` keeps working from any directory
-#      even if this repo is later moved or deleted. Pass --dev to install in
-#      editable mode instead (useful when hacking on pm-shell itself).
-#   3. Prompt for your Jira credentials and write them to
-#      $XDG_CONFIG_HOME/pm-shell/secrets.json (default: ~/.config/pm-shell/).
-#
-# Safe to re-run: an existing pm install is refreshed in place, and the
-# secrets file is only rewritten if you confirm.
+# pm-shell installer. Ensures uv + Python are present, installs the `pm` CLI
+# globally (--dev for editable), and writes Jira credentials to
+# $XDG_CONFIG_HOME/pm-shell/secrets.json. Safe to re-run.
 
 set -euo pipefail
-
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
 
 readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/pm-shell"
@@ -26,10 +12,6 @@ readonly SECRETS_FILE="$CONFIG_DIR/secrets.json"
 readonly PYTHON_CONSTRAINT=">=3.11"
 readonly UV_INSTALLER_URL="https://astral.sh/uv/install.sh"
 readonly TOKEN_HELP_URL="https://id.atlassian.com/manage-profile/security/api-tokens"
-
-# ---------------------------------------------------------------------------
-# Output helpers
-# ---------------------------------------------------------------------------
 
 if [[ -t 1 ]]; then
     BOLD=$'\033[1m'; DIM=$'\033[2m'; RED=$'\033[31m'
@@ -46,7 +28,6 @@ note() { printf   '  %s%s%s\n'          "$DIM"    "$*"     "$RESET"; }
 die()  { printf '\n%s✗%s %s\n' "$RED" "$RESET" "$*" >&2; exit 1; }
 
 confirm() {
-    # confirm "Prompt text" [default=N]
     local prompt=$1 default=${2:-N} reply suffix
     suffix=$([[ "$default" =~ ^[Yy]$ ]] && echo "[Y/n]" || echo "[y/N]")
     printf '  %s %s ' "$prompt" "$suffix"
@@ -54,10 +35,6 @@ confirm() {
     reply=${reply:-$default}
     [[ "$reply" =~ ^[Yy]$ ]]
 }
-
-# ---------------------------------------------------------------------------
-# 1. Toolchain
-# ---------------------------------------------------------------------------
 
 ensure_uv() {
     step "Checking for uv"
@@ -74,9 +51,7 @@ ensure_uv() {
 
     curl -LsSf "$UV_INSTALLER_URL" | sh
 
-    # The installer drops uv into ~/.local/bin (or ~/.cargo/bin on some setups)
-    # and updates shell rc files — but the current shell hasn't been reloaded.
-    # Probe the well-known locations so we can keep going in this session.
+    # Installer updates shell rc files but the current shell isn't reloaded — probe the well-known paths.
     for candidate in "$HOME/.local/bin/uv" "$HOME/.cargo/bin/uv"; do
         if [[ -x "$candidate" ]]; then
             export PATH="$(dirname "$candidate"):$PATH"
@@ -101,10 +76,6 @@ ensure_python() {
     ok "Python $("$py" --version 2>&1 | awk '{print $2}') ($py)"
 }
 
-# ---------------------------------------------------------------------------
-# 2. Install pm globally
-# ---------------------------------------------------------------------------
-
 install_cli() {
     local mode_label="standalone (repo-independent)"
     local install_args=("--force")
@@ -128,12 +99,7 @@ install_cli() {
     fi
 }
 
-# ---------------------------------------------------------------------------
-# 3. Credentials
-# ---------------------------------------------------------------------------
-
 prompt_value() {
-    # prompt_value VAR_NAME "Label" ["default value"]
     local var=$1 label=$2 default=${3:-} reply
     if [[ -n "$default" ]]; then
         printf '  %s%s%s [%s]: ' "$BOLD" "$label" "$RESET" "$default"
@@ -147,7 +113,6 @@ prompt_value() {
 }
 
 prompt_secret() {
-    # prompt_secret VAR_NAME "Label"
     local var=$1 label=$2 reply
     printf '  %s%s%s (hidden): ' "$BOLD" "$label" "$RESET"
     IFS= read -rs reply || reply=""
@@ -157,7 +122,6 @@ prompt_secret() {
 }
 
 read_existing_field() {
-    # read_existing_field FIELD — returns empty if the file or field is missing.
     local field=$1
     [[ -f "$SECRETS_FILE" ]] || return 0
     python3 - "$SECRETS_FILE" "$field" <<'PY' 2>/dev/null || true
@@ -170,7 +134,6 @@ PY
 }
 
 write_secrets_file() {
-    # write_secrets_file BASE_URL EMAIL TOKEN
     mkdir -p "$CONFIG_DIR"
     PM_BASE_URL=$1 PM_EMAIL=$2 PM_TOKEN=$3 python3 - "$SECRETS_FILE" <<'PY'
 import json, os, sys
@@ -213,10 +176,6 @@ configure_credentials() {
     write_secrets_file "$base_url" "$email" "$token"
     ok "Wrote $SECRETS_FILE (chmod 600)"
 }
-
-# ---------------------------------------------------------------------------
-# Entry
-# ---------------------------------------------------------------------------
 
 usage() {
     cat <<EOF

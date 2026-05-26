@@ -101,7 +101,6 @@ def _banner() -> None:
 
 
 def _dispatch(app: "typer.Typer", argv: list[str]) -> None:
-    """Run a typer command without sys.exiting the REPL."""
     from typer.main import get_command
 
     cmd = get_command(app)
@@ -114,14 +113,13 @@ def _dispatch(app: "typer.Typer", argv: list[str]) -> None:
     except KeyboardInterrupt:
         err_console.print("[yellow]^C[/]")
     except SystemExit:
-        # Some commands (e.g. --help) raise SystemExit even in standalone_mode=False.
+        # `--help` raises SystemExit even with standalone_mode=False.
         pass
     except Exception as exc:  # noqa: BLE001 — REPL must survive unexpected errors
         err_console.print(f"[red]error:[/] {exc!s}")
 
 
 def run_repl(app: "typer.Typer") -> int:
-    """Interactive shell over the existing typer app. Returns the desired process exit code."""
     completer = PMCompleter(app)
     session: PromptSession = PromptSession(
         completer=completer,
@@ -166,8 +164,6 @@ def run_repl(app: "typer.Typer") -> int:
 
         _dispatch(app, argv)
 
-        # Mutations may have added/removed keys (task add, etc.). Cheap to invalidate;
-        # the next Tab press repopulates from disk.
         if head in ("clone", "task", "story", "epic", "comment"):
             completer.refresh_keys()
 

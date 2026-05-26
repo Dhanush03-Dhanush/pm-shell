@@ -1,8 +1,5 @@
-"""Seed local workspace with N epics x M stories (+ subtasks/comments) for stress-testing merge.
-
-Bypasses the typer CLI so we can scaffold ~200 dirty records in <1s of Python time;
-the slow part is pm merge itself talking to Jira.
-"""
+"""Seed local workspace with N epics × M stories (+ subtasks/comments) for stress-testing merge.
+Bypasses the typer CLI so scaffolding is fast — the slow part is the actual merge."""
 
 from __future__ import annotations
 

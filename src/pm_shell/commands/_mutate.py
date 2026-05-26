@@ -1,4 +1,4 @@
-"""Shared helpers for local-write commands (Phase 4 mutations)."""
+"""Shared helpers for local-write commands."""
 
 from __future__ import annotations
 
@@ -21,11 +21,7 @@ def now_iso() -> str:
 
 
 def next_local_key(cfg: Config) -> str:
-    """Reserve and return the next `NEW-<n>` placeholder key.
-
-    Increments and persists `cfg.next_local_id`. Push (Phase 6) replaces these
-    with real Jira keys after the issue is created server-side.
-    """
+    # Push replaces NEW-<n> with the real Jira key once the issue is created.
     from pm_shell.config import save_config
     n = cfg.next_local_id
     cfg.next_local_id = n + 1
@@ -34,10 +30,6 @@ def next_local_key(cfg: Config) -> str:
 
 
 def jira_status_for(canonical: str, cfg: Config) -> str:
-    """Translate canonical status → Jira display name via config.statusMap.
-
-    Errors clearly if the workflow has no mapped status (typical for `blocked`).
-    """
     mapped = cfg.status_map.get(canonical)
     if not mapped:
         available = ", ".join(k for k, v in cfg.status_map.items() if v) or "(none)"
@@ -119,7 +111,6 @@ def append_comment(story_key: str, body_text: str, *, cfg: Optional[Config] = No
 
 
 def apply_status(record: dict[str, Any], canonical: str, cfg: Config) -> None:
-    """Set canonical + Jira status fields on a story/epic/task record."""
     record["status"] = canonical
     record["statusJira"] = jira_status_for(canonical, cfg)
     if "done" in record:

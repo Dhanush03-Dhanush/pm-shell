@@ -1,10 +1,6 @@
-"""Textual app — chat-style shell for pm-shell.
-
-Layout (top → bottom): banner / scrolling output log / prompt row / footer.
-Commands dispatch through the same typer engine the one-shot CLI uses; output
-is captured via `rich.console.Console.capture()` and rendered into the log as
-ANSI-decoded Text so colours survive.
-"""
+"""Textual chat-style shell. Commands dispatch through the same typer engine
+the one-shot CLI uses; output is captured and rendered into the log as
+ANSI-decoded Text so colours survive."""
 
 from __future__ import annotations
 
@@ -41,22 +37,18 @@ _KIND_COLOR = {"created": "green", "modified": "yellow", "deleted": "red"}
 
 
 class PMInput(Input):
-    """Input that accepts the ghost-text suggestion on Tab (in addition to →)."""
-
+    # Tab accepts the ghost-text suggestion (→ already does this by default).
     BINDINGS = [
         Binding("tab", "cursor_right", show=False, priority=True),
     ]
 
 
 class PMLog(RichLog):
-    """RichLog that can't take focus — clicks fall through, prompt keeps it."""
-
+    # Clicks fall through to the prompt instead of stealing focus.
     can_focus = False
 
 
 class PMSuggester(Suggester):
-    """Inline ghost-text suggester backed by the existing PMCompleter."""
-
     def __init__(self, typer_app: "typer.Typer") -> None:
         super().__init__(use_cache=False, case_sensitive=False)
         self._completer = PMCompleter(typer_app)
@@ -82,25 +74,20 @@ class PMShell(App):
     CSS_PATH = "styles.tcss"
     TITLE = "pm-shell"
 
-    # Disable Textual's built-in command palette (Ctrl+P / theme picker /
-    # save-screenshot menu). pm-shell has its own command surface; we don't
-    # want the palette page or its footer hint showing up.
     ENABLE_COMMAND_PALETTE = False
 
     BINDINGS = [
         Binding("ctrl+d", "quit", "quit", show=True),
         Binding("pageup", "scroll_log_up", "scroll", show=True),
         Binding("pagedown", "scroll_log_down", "", show=False),
-        # No priority — keep ↑/↓ history at the bottom of the chain so widgets
-        # like ListView (in DiffScreen) handle them first.
+        # No priority — keep ↑/↓ at the bottom of the chain so ListView
+        # (in DiffScreen) handles them first.
         Binding("up", "history_back", "history", show=True),
         Binding("down", "history_forward", "", show=False),
     ]
 
     def __init__(self, typer_app: "typer.Typer") -> None:
         super().__init__()
-        # Lock the theme to ansi-dark so colors come from the user's terminal
-        # palette and stay consistent regardless of Textual version defaults.
         self.theme = "ansi-dark"
         self._typer_app = typer_app
         self._suggester = PMSuggester(typer_app)
@@ -108,8 +95,7 @@ class PMShell(App):
         self._history_idx: Optional[int] = None
         self._original_cwd: Optional[Path] = None
         self._known_commands = _collect_known_commands(typer_app)
-        # When set, the next submitted input is routed to this callback instead
-        # of being treated as a command (used for inline y/n prompts).
+        # Routes next submitted line to this callback instead of dispatching it (y/n prompts).
         self._pending_input: Optional[Callable[[str], None]] = None
 
     def compose(self) -> ComposeResult:
@@ -155,7 +141,8 @@ class PMShell(App):
                 pass
 
     def _banner_text(self) -> str:
-        return ""  # banner is rendered into the log on_mount; the Static is reserved for future status info
+        # Banner is rendered into the log on_mount; this Static is reserved for future status.
+        return ""
 
     def _context_label(self) -> Text:
         epic_key, story_key = resolve_context()
@@ -181,8 +168,6 @@ class PMShell(App):
 
         log = self.query_one("#log", RichLog)
 
-        # If a previous command asked for inline input (y/n), route this line
-        # to the registered callback instead of dispatching it as a command.
         if self._pending_input is not None:
             pending = self._pending_input
             self._pending_input = None
@@ -312,11 +297,6 @@ class PMShell(App):
         self.push_screen(DiffScreen(changes))
 
     def _handle_merge(self, extra_args: list[str]) -> None:
-        """Inline-confirm and run the merge, streaming per-operation progress into the log.
-
-        Replaces the modal confirm + dispatch-with-capture path so users see each
-        step land in real time (push can take a while for large workspaces).
-        """
         from pm_shell.sync.diff import compute_changes
 
         log = self.query_one("#log", RichLog)
@@ -352,7 +332,6 @@ class PMShell(App):
         return Text.from_markup(f"{prefix} {len(changes)} change(s) — {counts_line}")
 
     def _run_merge_live(self, *, dry_run: bool) -> None:
-        """Kick off merge() on a background thread and pipe progress into the log live."""
         log = self.query_one("#log", RichLog)
 
         try:
@@ -407,7 +386,6 @@ class PMShell(App):
         self._suggester.refresh()
         self._refresh_context()
 
-    # ── Actions ──────────────────────────────────────────────────────────────
     def action_scroll_log_up(self) -> None:
         self.query_one("#log", RichLog).scroll_page_up(animate=False)
 
@@ -523,7 +501,6 @@ _HELP_TEXT = Text.from_markup("""\
 
 
 def _collect_known_commands(typer_app: "typer.Typer") -> set[str]:
-    """Union of typer top-level commands + REPL builtins. Used to short-circuit unknown input."""
     from typer.main import get_command
 
     builtins = {"cd", "pwd", "clear", "help", "exit", "quit", ":q"}
@@ -531,6 +508,5 @@ def _collect_known_commands(typer_app: "typer.Typer") -> set[str]:
 
 
 def run_tui(typer_app: "typer.Typer") -> int:
-    """Launch the Textual app. Returns the desired process exit code."""
     PMShell(typer_app).run()
     return 0

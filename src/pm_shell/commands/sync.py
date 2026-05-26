@@ -1,8 +1,4 @@
-"""Local-state sync commands: status, diff.
-
-`status` summarises what's changed; `diff` shows the unified text diffs.
-Both read from `sync/diff.py` and are pure local operations — no Jira calls.
-"""
+"""Local-state sync commands: status, diff, merge."""
 
 from __future__ import annotations
 
@@ -105,9 +101,6 @@ def diff(
             before_label=f"{c.file_label} (baseline)",
             after_label=f"{c.file_label} (current)",
         ))
-
-
-# ── Helpers ─────────────────────────────────────────────────────────────────
 
 
 def _print_summary_line(changes: list[Change]) -> None:

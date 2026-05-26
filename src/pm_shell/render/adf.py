@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-# Block-level node types — each contributes a paragraph break in plain rendering.
+# Each block-level type contributes a paragraph break in plain rendering.
 _BLOCK_NODES = {
     "doc",
     "paragraph",
@@ -20,10 +20,7 @@ _BULLET_PREFIX = "  - "
 
 
 def adf_to_plain(node: Any) -> str:
-    """Best-effort ADF (Atlassian Document Format) → plain text.
-
-    Round-trip fidelity is not the goal; this is for terminal display only.
-    """
+    # Best-effort ADF → plain text for terminal display; not round-trip fidelity.
     if node is None:
         return ""
     if isinstance(node, str):
@@ -57,10 +54,7 @@ def adf_to_plain(node: Any) -> str:
 
 
 def plain_to_adf(text: Optional[str]) -> Optional[dict[str, Any]]:
-    """Wrap plain text into a minimal ADF doc. Blank lines become paragraph breaks.
-
-    Returns None for empty/None input so the field round-trips to a cleared description.
-    """
+    # Empty input → None so the field round-trips to a cleared description.
     if text is None:
         return None
     cleaned = text.strip("\n")
