@@ -23,7 +23,6 @@ _KEY_RE = re.compile(r"^[A-Z][A-Z0-9]*-\d+$")
 
 
 def _split_story_id(arg1: Optional[str], arg2: Optional[str]) -> tuple[str, int]:
-    """Disambiguate `task done [STORY] ID` — story key looks like KAN-5; ID is an int."""
     if arg1 is None and arg2 is None:
         raise typer.BadParameter("Task ID required.")
     if arg2 is None:
@@ -42,7 +41,6 @@ def _split_story_id(arg1: Optional[str], arg2: Optional[str]) -> tuple[str, int]
 
 
 def _split_story_and_text(arg1: Optional[str], arg2: Optional[str]) -> tuple[str, str]:
-    """Disambiguate `task add [STORY] "title"` — story is a key; otherwise arg1 is the title."""
     if arg1 is None and arg2 is None:
         raise typer.BadParameter("Task title required.")
     if arg2 is None:
@@ -151,7 +149,6 @@ def task_edit(
 ) -> None:
     """Edit a task's title by ID. Pass the new title or open $EDITOR if omitted."""
     if title is None and arg2 and not arg2.isdigit():
-        # form: task edit ID "new title"  (no story key)
         story_key = resolve_story_key(None)
         try:
             task_id = int(arg1) if arg1 else None
@@ -159,11 +156,9 @@ def task_edit(
             raise typer.BadParameter(f"Invalid task ID: {arg1!r}") from None
         new_title: Optional[str] = arg2
     elif title is None:
-        # form: task edit [STORY] ID  → open editor
         story_key, task_id = _split_story_id(arg1, arg2)
         new_title = None
     else:
-        # form: task edit STORY ID "new title"
         story_key, task_id = _split_story_id(arg1, arg2)
         new_title = title
 

@@ -24,7 +24,7 @@ _CATEGORY_FALLBACK: dict[str, str] = {
 
 
 def _flatten_statuses(payload: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Project statuses come back grouped by issuetype; flatten and de-duplicate by name."""
+    # Statuses come back grouped by issuetype; flatten and de-dup by name.
     seen: dict[str, dict[str, Any]] = {}
     for issuetype in payload:
         for status in issuetype.get("statuses", []):
@@ -35,13 +35,7 @@ def _flatten_statuses(payload: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def detect_status_map(client: JiraClient, project_key: str) -> dict[str, Optional[str]]:
-    """Probe the project's workflow and infer canonical→Jira status name map.
-
-    Strategy per canonical key:
-      1. Match a status by preferred display name (case-insensitive).
-      2. Otherwise, fall back to the first status in the matching statusCategory.
-      3. If still nothing, leave as None.
-    """
+    # Per canonical: try preferred display names, then statusCategory fallback, else None.
     raw = client.get_project_statuses(project_key)
     statuses = _flatten_statuses(raw)
     by_lower_name = {s["name"].lower(): s for s in statuses}

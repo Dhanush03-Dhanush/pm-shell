@@ -71,12 +71,8 @@ def smart_set(
     epic: Annotated[Optional[str], typer.Option("--epic", help="Reparent story to a different epic.")] = None,
     points: Annotated[Optional[int], typer.Option("--points", help="Story points (integer).")] = None,
 ) -> None:
-    """Update fields on the current epic or story (cwd-inferred).
-
-    Routes to `epic set` when cwd is inside an epic dir (no story), to `story set`
-    when inside a story dir. Flags that don't apply to the current item type are
-    ignored with a warning so the same muscle memory works for both.
-    """
+    """Update fields on the current epic or story (cwd-inferred). Routes to
+    `epic set` or `story set`; flags that don't apply are ignored with a warning."""
     from pm_shell.workspace.paths import resolve_context
 
     epic_key, story_key = resolve_context()
@@ -158,7 +154,6 @@ def cmd_shell(
 
 
 def _launch_shell(*, simple: bool = False) -> None:
-    """Open either the Textual TUI (default) or the prompt_toolkit REPL (--simple / non-TTY)."""
     import sys
 
     use_tui = not simple and sys.stdin.isatty() and sys.stdout.isatty()
@@ -210,12 +205,8 @@ def cmd_clone(
         typer.Option("--force", help="Wipe and re-clone even if a local tree exists."),
     ] = False,
 ) -> None:
-    """Clone the configured Jira board into .jira/.
-
-    With `--space NAME`, looks up the boardId in ~/.config/pm-shell/spaces.json,
-    writes .jira/config.json in the current directory, then clones. Pair with
-    `pm create` to bootstrap brand-new workspaces by name.
-    """
+    """Clone the configured Jira board into .jira/. With `--space NAME`, looks up
+    the boardId in ~/.config/pm-shell/spaces.json and writes .jira/config.json first."""
     if space is not None:
         _bootstrap_workspace_from_space(space, force=force)
 
@@ -254,12 +245,7 @@ _POINTS_FIELD_SPEC = {
 
 
 def _ensure_story_points_field(client: JiraClient) -> tuple[str, bool]:
-    """Make sure the tenant has a Story Points number custom field.
-
-    Returns `(field_id, created)`. Idempotent — re-running on a tenant that already
-    has the field is a single GET. The field is tenant-wide, so creating it once
-    means every team-managed project (existing and future) can use it.
-    """
+    # Returns (field_id, created). Idempotent. Tenant-wide, so one creation covers every project.
     fields = client.get("/rest/api/3/field") or []
     for f in fields:
         if (f.get("name") or "").lower() in _POINTS_FIELD_NAMES:
@@ -284,11 +270,6 @@ def _ensure_story_points_field(client: JiraClient) -> tuple[str, bool]:
 
 
 def _bootstrap_workspace_from_space(space_name: str, *, force: bool) -> None:
-    """Write `.jira/config.json` in cwd from the global secrets + named space.
-
-    Refuses to overwrite an existing config unless `force=True`. The clone phase
-    that runs after this call relies on the freshly-written config.
-    """
     try:
         secrets = load_secrets()
         entry = resolve_space(space_name)
@@ -329,16 +310,8 @@ def cmd_create(
     ] = None,
 ) -> None:
     """Create a new Jira project (a "space") and register it for `pm clone --space`.
-
-    Requires ~/.config/pm-shell/secrets.json with baseUrl, email, apiToken.
-    Hard-coded to the team-managed Scrum template — that gives you Epic / Story /
-    Task / Subtask issue types and the standard Highest..Lowest priorities.
-
-    Also guarantees the tenant has a Story Points number custom field (creates one
-    the first time, idempotent thereafter). Together that's the configuration
-    `pm merge` is built around — no follow-up Jira-UI work needed for points to
-    round-trip on stories created in the new space.
-    """
+    Uses the team-managed Scrum template and ensures the tenant has a Story Points
+    number custom field (one-time, idempotent)."""
     try:
         secrets = load_secrets()
     except GlobalConfigError as exc:

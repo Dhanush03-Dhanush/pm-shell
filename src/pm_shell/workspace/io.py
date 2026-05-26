@@ -7,7 +7,7 @@ from typing import Any
 
 
 def atomic_write_json(path: Path, data: Any, *, indent: int = 2) -> None:
-    """Write JSON to `path` atomically: write to a sibling .tmp, fsync, rename."""
+    # Write to a sibling .tmp, fsync, then rename.
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
     with tmp.open("w", encoding="utf-8") as f:

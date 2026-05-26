@@ -28,7 +28,7 @@ def epic_table(epics: list[dict[str, Any]], story_counts: dict[str, int]) -> Tab
 
 
 def story_table(stories: list[dict[str, Any]], task_counts: dict[str, tuple[int, int]]) -> Table:
-    """task_counts: story_key → (done, total)."""
+    # task_counts: story_key → (done, total)
     table = Table(show_header=True, header_style="bold", expand=False)
     table.add_column("KEY", style="magenta", no_wrap=True)
     table.add_column("SUMMARY")

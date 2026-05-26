@@ -1,9 +1,4 @@
-"""Startup banner shared by the Textual TUI and the simple REPL.
-
-One source of truth for the pixel-art logo and the version/status line that
-follows it, so both shell surfaces look identical and the art only has to be
-maintained once.
-"""
+"""Startup banner shared by the Textual TUI and the simple REPL."""
 
 from __future__ import annotations
 
@@ -13,9 +8,7 @@ from rich.console import Group
 from rich.text import Text
 
 
-# Half-block "pixel" rendering of "PM·SHELL". Two rows keeps it compact
-# enough for any terminal width (~33 cols) and avoids wrapping in narrow
-# panes. Each character is hand-aligned; if you edit a row, edit both.
+# Half-block "PM·SHELL" — ~33 cols, hand-aligned per char (edit both rows together).
 _LOGO_ROWS: tuple[str, ...] = (
     "█▀█ █▀▄▀█   █▀ █ █ █▀▀ █   █  ",
     "█▀▀ █ ▀ █   ▄█ █▀█ █▄▄ █▄▄ █▄▄",
@@ -23,18 +16,11 @@ _LOGO_ROWS: tuple[str, ...] = (
 _TAGLINE = "a git-like shell for Jira boards"
 _TAGLINE_STYLE = "dim italic"
 
-# Horizontal gradient applied per-column across both logo rows: turquoise on
-# the left, deep blue on the right. Tuples are (R, G, B), 0–255.
 _GRADIENT_START: tuple[int, int, int] = (64, 224, 208)   # #40E0D0 turquoise
 _GRADIENT_END:   tuple[int, int, int] = (38, 96, 235)    # #2660EB cobalt blue
 
 
 def _gradient_row(row: str) -> Text:
-    """Color each column of a logo row by interpolating start→end RGB.
-
-    Truecolor (24-bit) is used; Rich automatically downsamples on terminals
-    that only support 256 colors, so this stays readable everywhere.
-    """
     text = Text()
     span = max(len(row) - 1, 1)
     for i, char in enumerate(row):
@@ -47,7 +33,7 @@ def _gradient_row(row: str) -> Text:
 
 
 def project_from_url(base_url: Optional[str]) -> str:
-    """Extract the tenant subdomain from a Jira base URL ('acme' from 'https://acme.atlassian.net')."""
+    # 'acme' from 'https://acme.atlassian.net'.
     if not base_url:
         return "?"
     try:
@@ -63,14 +49,10 @@ def banner(
     epic_count: Optional[int] = None,
     story_count: Optional[int] = None,
 ) -> Group:
-    """Build the startup banner as a Rich renderable.
-
-    Works in both `console.print(...)` (REPL) and `RichLog.write(...)` (TUI).
-    Pass `project=None` to render the no-workspace variant with a setup hint.
-    """
+    # project=None renders the no-workspace variant with a setup hint.
     parts: list[Text] = [_gradient_row(row) for row in _LOGO_ROWS]
     parts.append(Text(_TAGLINE, style=_TAGLINE_STYLE))
-    parts.append(Text(""))  # blank line between art and status
+    parts.append(Text(""))
     parts.append(_status_line(version, project, epic_count, story_count))
     parts.append(_hint_line(project is not None))
     return Group(*parts)

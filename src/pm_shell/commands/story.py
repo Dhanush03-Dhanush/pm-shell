@@ -98,7 +98,6 @@ def _set_fields(
     epic: Optional[str],
     points: Optional[int],
 ) -> list[str]:
-    """Mutate `record` in place. Returns a list of human-readable change descriptions."""
     cfg = load_config()
     changes: list[str] = []
 
@@ -266,10 +265,8 @@ def story_edit(
 def story_delete(
     key: Annotated[Optional[str], typer.Argument(help="Story key. Inferred from cwd if omitted.")] = None,
 ) -> None:
-    """Mark a story for deletion. Executed on next `push`.
-
-    Unpushed (NEW-*) stories are removed immediately since they don't exist in Jira yet.
-    """
+    """Mark a story for deletion (applied on next `push`).
+    Unpushed (NEW-*) stories are removed immediately."""
     import shutil
 
     from pm_shell.workspace.paths import find_story_dir

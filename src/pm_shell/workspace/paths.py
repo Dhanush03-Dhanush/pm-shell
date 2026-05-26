@@ -12,7 +12,6 @@ KEY_RE = re.compile(r"^[A-Z][A-Z0-9]*-\d+$")
 
 
 def slugify(text: str, *, max_length: int = 60) -> str:
-    """Lowercased, ASCII-folded, hyphen-separated slug. Empty input yields 'untitled'."""
     if not text:
         return "untitled"
     normalized = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
@@ -43,7 +42,7 @@ def log_dir() -> Path:
 
 
 def parse_key_from_dirname(name: str) -> Optional[str]:
-    """`KAN-4_auth-overhaul` → `KAN-4`. Returns None if the name has no underscore."""
+    # `KAN-4_auth-overhaul` → `KAN-4`. None if there's no underscore.
     if "_" not in name:
         return None
     return name.split("_", 1)[0]
@@ -60,7 +59,6 @@ def find_epic_dir(key: str) -> Optional[Path]:
 
 
 def find_story_dir(key: str) -> Optional[Path]:
-    """Walk epic dirs and unparented/ to locate a story by key."""
     root = epics_dir()
     if root.exists():
         for epic_dir in root.iterdir():
@@ -78,11 +76,7 @@ def find_story_dir(key: str) -> Optional[Path]:
 
 
 def navigable_keys() -> list[str]:
-    """Sorted list of epic + story keys (anything that has an on-disk directory).
-
-    Sub-tasks are excluded — they don't have their own directory, just an entry in tasks.json.
-    Used to power Tab completion for cd/ls/tree.
-    """
+    # Epic + story keys (anything with an on-disk dir). Sub-tasks live inside tasks.json.
     keys: list[str] = []
     root = epics_dir()
     if root.exists():
@@ -108,21 +102,14 @@ def navigable_keys() -> list[str]:
 
 
 def resolve_workspace_target(arg: str) -> Optional[Path]:
-    """If `arg` is a Jira key with a matching dir in the workspace, return that dir.
-
-    Returns None if `arg` doesn't look like a key or no matching dir exists.
-    Callers should fall back to treating `arg` as a regular filesystem path.
-    """
+    # Returns the matching epic/story dir if `arg` is a Jira key; None otherwise.
     if not KEY_RE.match(arg):
         return None
     return find_epic_dir(arg) or find_story_dir(arg)
 
 
 def resolve_context(start: Optional[Path] = None) -> tuple[Optional[str], Optional[str]]:
-    """Inspect cwd against the .jira tree and return inferred (epic_key, story_key).
-
-    Returns (None, None) when cwd is outside the workspace.
-    """
+    # (None, None) when cwd is outside the workspace.
     cwd = (start or Path.cwd()).resolve()
     ws = workspace_dir().resolve()
     try:

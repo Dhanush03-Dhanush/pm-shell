@@ -28,10 +28,7 @@ from pm_shell.workspace.tree import (
 
 
 def _classify(path: Path) -> tuple[str, Optional[str], Optional[str]]:
-    """Return (kind, epic_key, story_key) for a path inside .jira/.
-
-    kind ∈ {"workspace", "epics_root", "epic", "story", "unparented_root", "outside"}.
-    """
+    # kind ∈ {"workspace", "epics_root", "epic", "story", "unparented_root", "outside"}
     p = path.resolve()
     ws = workspace_dir().resolve()
     try:
@@ -58,11 +55,7 @@ def _classify(path: Path) -> tuple[str, Optional[str], Optional[str]]:
 
 
 def _resolve_target(arg: Optional[str]) -> tuple[Path, bool]:
-    """Resolve a CLI target into (path, was_explicit). Accepts a Jira key or a path.
-
-    `was_explicit` is True when the user supplied an argument (so we error on missing dirs
-    instead of falling back to the workspace root).
-    """
+    # explicit=True when the user passed an argument (errors on missing dirs instead of falling back).
     if arg is None:
         return Path.cwd().resolve(), False
     resolved = resolve_workspace_target(arg)
@@ -85,7 +78,7 @@ def ls(
         if explicit:
             err_console.print(f"[red]{resolved} is outside the .jira workspace.[/]")
             raise typer.Exit(code=1)
-        kind = "workspace"  # default fallback when invoked from outside
+        kind = "workspace"
 
     if kind in ("workspace", "epics_root"):
         epics = list_epics()

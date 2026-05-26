@@ -34,11 +34,7 @@ class JiraHTTPError(RuntimeError):
 
 
 class JiraClient:
-    """Thin httpx wrapper for the Jira Cloud REST v3 API.
-
-    Authenticates with email + API token (basic auth) per
-    https://developer.atlassian.com/cloud/jira/platform/basic-auth-for-rest-apis/
-    """
+    """Thin httpx wrapper for the Jira Cloud REST v3 API (basic auth: email + API token)."""
 
     def __init__(self, config: Config, *, timeout: float = 30.0) -> None:
         self._config = config
@@ -103,10 +99,7 @@ class JiraClient:
         fields: Optional[tuple[str, ...]] = None,
         page_size: int = 100,
     ) -> Iterator[dict[str, Any]]:
-        """Iterate every issue matching `jql` using the new /search/jql endpoint.
-
-        Uses nextPageToken pagination — the legacy /search startAt API is deprecated.
-        """
+        # /search/jql with nextPageToken — the legacy startAt /search API is deprecated.
         params: dict[str, Any] = {
             "jql": jql,
             "maxResults": page_size,

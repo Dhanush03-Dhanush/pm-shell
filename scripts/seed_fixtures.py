@@ -1,11 +1,6 @@
 """Seed the configured Jira project with a small fixture set for testing.
-
-Creates 3 epics, 5 stories, 5 sub-tasks, and 1 comment via the Jira REST API.
-Idempotency is NOT guaranteed — re-running creates duplicates. Delete via the
-Jira UI to start fresh.
-
-Run via: uv run python scripts/seed_fixtures.py
-"""
+Not idempotent — re-running creates duplicates. Delete via the Jira UI to reset.
+Run: uv run python scripts/seed_fixtures.py"""
 
 from __future__ import annotations
 
@@ -16,7 +11,6 @@ from pm_shell.jira.client import JiraClient
 
 
 def _adf(text: str) -> dict[str, Any]:
-    """Wrap a plain string into a minimal Atlassian Document Format payload."""
     return {
         "type": "doc",
         "version": 1,
@@ -27,7 +21,6 @@ def _adf(text: str) -> dict[str, Any]:
 
 
 def _pick_issue_type(issue_types: list[dict[str, Any]], *, want_epic: bool = False, want_subtask: bool = False) -> str:
-    """Choose an issue type name from the project's available types."""
     if want_epic:
         for it in issue_types:
             if it.get("name", "").lower() == "epic":
@@ -108,7 +101,6 @@ def main() -> None:
         subtask_type = _pick_issue_type(issue_types, want_subtask=True)
         print(f"Using: epic={epic_type}, story={story_type}, sub-task={subtask_type}")
 
-        # Epic 1: Auth overhaul
         e1 = create_issue(client, project_key, epic_type, "Auth overhaul",
                           description="Replace legacy session auth with OIDC-backed SSO.",
                           labels=["auth", "security"])
@@ -130,7 +122,6 @@ def main() -> None:
         add_comment(client, s1a, "Blocking on Okta tenant provisioning — ETA Friday.")
         print(f"      + comment on {s1a}")
 
-        # Epic 2: Onboarding flow
         e2 = create_issue(client, project_key, epic_type, "Onboarding flow",
                           description="Net-new user onboarding from signup to first action.",
                           labels=["onboarding"])
@@ -147,7 +138,6 @@ def main() -> None:
                            parent_key=e2, priority="Low")
         print(f"    story {s2b}: Email verification")
 
-        # Epic 3: Performance pass
         e3 = create_issue(client, project_key, epic_type, "Performance pass",
                           description="Identify and fix the top P99 hotspots in the request path.",
                           labels=["perf"])

@@ -25,18 +25,6 @@ _PATH_LEADING = ("/", "~", ".")
 
 
 class PMCompleter(Completer):
-    """Context-aware completer for the pm-shell REPL.
-
-    Resolves completions in this order:
-      1. `cd|ls|tree <path>` → filesystem paths
-      2. `cd|ls|tree <key>`  → Jira keys scoped to cwd (root → epics; in epic → its stories)
-      3. `--status <value>`  → canonical statuses
-      4. `--priority <val>`  → canonical priorities
-      5. first token         → top-level commands (REPL builtins + typer subcommands)
-      6. second token        → subcommands of the named command
-      7. positional after a verb → all Jira keys (epic + story + sub-task)
-    """
-
     def __init__(self, app: "typer.Typer") -> None:
         cmd = _get_root_command(app)
         self._top = sorted({*cmd.commands.keys(), *_BUILTINS})
@@ -59,7 +47,7 @@ class PMCompleter(Completer):
         return self._all_keys_cache
 
     def _scoped_nav_keys(self) -> list[str]:
-        """Children of cwd that can be `cd`-ed into. Not cached — cwd may change between calls."""
+        # Not cached — cwd may change between calls.
         from pm_shell.workspace.tree import list_epics, stories_for_epic
         epic_key, story_key = resolve_context()
         if story_key:
@@ -69,7 +57,6 @@ class PMCompleter(Completer):
         return [e["key"] for e in list_epics()]
 
     def refresh_keys(self) -> None:
-        """Invalidate cached key lists — call after operations that may add/remove keys."""
         self._all_keys_cache = None
 
     def get_completions(
@@ -85,7 +72,6 @@ class PMCompleter(Completer):
         preceding = tokens[:-1] if (partial and tokens) else tokens
 
         if preceding and preceding[0] in _NAV_COMMANDS:
-            # Navigable commands take a Jira key OR a filesystem path. Pick by partial shape.
             if partial.startswith(_PATH_LEADING):
                 sub_doc = Document(partial, len(partial))
                 yield from self._path_completer.get_completions(sub_doc, complete_event)

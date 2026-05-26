@@ -1,9 +1,5 @@
-"""Diff viewer modal — file list on the left, unified diff on the right.
-
-Push onto the app stack with `app.push_screen(DiffScreen(compute_changes()))`.
-Esc pops back to the main shell. ↑/↓ (or j/k) cycle through changed files;
-the right pane re-renders for the highlighted entry.
-"""
+"""Diff viewer modal: file list on the left, unified diff on the right.
+Esc pops back; ↑/↓ (or j/k) cycle through files."""
 
 from __future__ import annotations
 
@@ -37,8 +33,6 @@ _TYPE_STYLE = {
 
 
 class DiffScreen(Screen):
-    """Modal: file list + diff pane. Esc returns to the main app."""
-
     CSS_PATH = "diff_screen.tcss"
 
     BINDINGS = [
@@ -81,8 +75,6 @@ class DiffScreen(Screen):
         if idx is None or idx >= len(self._changes):
             return
         self._render_change(self._changes[idx])
-
-    # ── rendering ────────────────────────────────────────────────────────────
 
     def _header_text(self) -> Text:
         if not self._changes:
@@ -129,8 +121,6 @@ class DiffScreen(Screen):
             f"[dim]{c.summary}[/]"
         )
 
-    # ── actions ──────────────────────────────────────────────────────────────
-
     def action_list_down(self) -> None:
         files = self.query_one("#diff-files", ListView)
         files.action_cursor_down()
@@ -147,6 +137,5 @@ class DiffScreen(Screen):
 
 
 def diff_screen(changes: Optional[list[Change]] = None) -> DiffScreen:
-    """Convenience constructor used by the TUI submit-handler."""
     from pm_shell.sync.diff import compute_changes
     return DiffScreen(changes if changes is not None else compute_changes())

@@ -1,20 +1,6 @@
-"""Detect and render local changes vs. the cloned baseline.
-
-The "baseline" is the raw Jira payload stored in `.jira/.baseline/<KEY>.json`
-when we last pulled. To compare it against the current workspace shape,
-re-apply the same converters `clone` used (`sync/shape.py`) and diff.
-
-Outputs:
-    - `compute_changes()` returns a flat `list[Change]` of every file-level
-      delta (epic.json, story.json, tasks.json, comments.json — one per file).
-    - `format_diff_text(before, after)` renders a unified diff into a
-      rich Text with +/− coloring, suitable for printing or for stuffing
-      into a Textual widget.
-
-Granularity is per-file rather than per-field: `git diff` familiarity for
-end users, simple data flow for us. Push (Phase 6) will need finer-grained
-inspection of changed fields but can do that lazily when applying each item.
-"""
+"""Detect and render local changes vs. the cloned baseline in `.jira/.baseline/`.
+Comparison re-applies the converters from `sync/shape.py` to the raw payload.
+Granularity is per-file (`git diff` style), not per-field."""
 
 from __future__ import annotations
 
@@ -36,27 +22,20 @@ from pm_shell.workspace.paths import (
     unparented_dir,
 )
 
-# ── Data model ──────────────────────────────────────────────────────────────
-
 ChangeKind = str  # "created" | "modified" | "deleted"
 IssueType = str   # "epic" | "story" | "tasks" | "comments"
 
 
 @dataclass
 class Change:
-    """One file-level delta between workspace and baseline."""
-
-    file_label: str  # e.g. "KAN-5/story.json" — shown in the file list
-    key: str         # the issue key this change belongs to (KAN-5, NEW-1, ...)
+    file_label: str
+    key: str
     kind: ChangeKind
     issue_type: IssueType
     summary: str = ""
     before_json: Optional[str] = None
     after_json: Optional[str] = None
-    notes: list[str] = field(default_factory=list)  # human-readable, e.g. "+2 tasks, -1 comment"
-
-
-# ── Baseline loading ────────────────────────────────────────────────────────
+    notes: list[str] = field(default_factory=list)
 
 
 def _load_baseline_raw(key: str) -> Optional[dict[str, Any]]:
@@ -84,7 +63,6 @@ def _baseline_story(key: str, epic_key: Optional[str]) -> Optional[dict[str, Any
 
 
 def _baseline_tasks_for_story(story_key: str) -> list[dict[str, Any]]:
-    """Reconstruct the cloned tasks list by walking sub-task baselines whose parent is story_key."""
     sm = _status_map()
     subtask_baselines: list[dict[str, Any]] = []
     for path in sorted(baseline_dir().glob("*.json")):
@@ -97,14 +75,8 @@ def _baseline_tasks_for_story(story_key: str) -> list[dict[str, Any]]:
     return [task_shape(i + 1, st, sm) for i, st in enumerate(subtask_baselines)]
 
 
-# ── JSON helpers ────────────────────────────────────────────────────────────
-
-
 def _pretty_json(data: Any) -> str:
     return json.dumps(data, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
-
-
-# ── Change detection ────────────────────────────────────────────────────────
 
 
 def _epic_change(epic_dir: Path) -> Optional[Change]:
@@ -142,7 +114,6 @@ def _story_changes(story_dir: Path, parent_epic_key: Optional[str]) -> list[Chan
     key = current["key"]
     summary = current.get("summary", "")
 
-    # story.json
     story_label = f"{key}/story.json"
     if current.get("_unpushed"):
         out.append(Change(story_label, key, "created", "story", summary, None, _pretty_json(current)))
@@ -157,7 +128,6 @@ def _story_changes(story_dir: Path, parent_epic_key: Optional[str]) -> list[Chan
             out.append(Change(story_label, key, "modified", "story", summary,
                               _pretty_json(baseline), _pretty_json(current)))
 
-    # tasks.json
     tasks_path = story_dir / "tasks.json"
     if tasks_path.exists():
         current_tasks = read_json(tasks_path)
@@ -171,7 +141,7 @@ def _story_changes(story_dir: Path, parent_epic_key: Optional[str]) -> list[Chan
                 notes=_task_notes(baseline_tasks, current_tasks),
             ))
 
-    # comments.json — only surface newly added (_unpushed) comments
+    # Only surface newly added (_unpushed) comments — existing ones never modify.
     comments_path = story_dir / "comments.json"
     if comments_path.exists():
         current_comments = read_json(comments_path)
@@ -207,10 +177,8 @@ def _task_notes(before: list[dict], after: list[dict]) -> list[str]:
 
 
 def compute_changes() -> list[Change]:
-    """Walk the workspace and return every file-level change vs. baseline."""
     changes: list[Change] = []
 
-    # Epics + their child stories
     if epics_dir().exists():
         for ed in sorted(epics_dir().iterdir()):
             if not ed.is_dir():
@@ -223,7 +191,6 @@ def compute_changes() -> list[Change]:
                 if sd.is_dir():
                     changes.extend(_story_changes(sd, epic_key))
 
-    # Unparented stories
     orphans = unparented_dir()
     if orphans.exists():
         for sd in sorted(orphans.iterdir()):
@@ -233,20 +200,13 @@ def compute_changes() -> list[Change]:
     return changes
 
 
-# ── Diff rendering ──────────────────────────────────────────────────────────
-
-# Background tints applied to + / - lines so the diff reads like git's
-# `--color=always` output (green/red highlights). Dark RGBs keep the bright
-# foreground text legible on most terminal themes.
 _ADD_STYLE = "green on #103820"
 _DEL_STYLE = "red on #401818"
 _HEADER_STYLE = "bold"
 _HUNK_STYLE = "cyan bold"
 _CONTEXT_STYLE = "white dim"
 
-# Pad each line to this many columns so the background fills the visible row.
-# Terminals will clip beyond their actual width; lines shorter than this get
-# the highlight all the way to the right edge.
+# Pad +/- lines so the background tint extends past the actual content.
 _LINE_PAD_WIDTH = 240
 
 
@@ -257,7 +217,6 @@ def format_diff_text(
     before_label: str = "baseline",
     after_label: str = "current",
 ) -> Text:
-    """Render a unified diff as a rich Text. Empty Text when both sides are identical."""
     before_lines = (before_json or "").splitlines(keepends=False)
     after_lines = (after_json or "").splitlines(keepends=False)
 
@@ -277,11 +236,6 @@ def format_diff_text(
 
 
 def _style_and_pad(line: str) -> tuple[str, str]:
-    """Pick the style and pad the line so its background extends across the row.
-
-    Headers and hunk markers aren't padded — they're short and the styling is
-    foreground-only, so trailing spaces would just be wasted ink.
-    """
     if line.startswith("+++") or line.startswith("---"):
         return _HEADER_STYLE, line
     if line.startswith("@@"):

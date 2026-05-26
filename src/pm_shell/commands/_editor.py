@@ -10,10 +10,7 @@ from typing import Optional
 
 
 def open_editor(initial_text: str = "", *, suffix: str = ".md") -> Optional[str]:
-    """Open $EDITOR (default: vi) on a tempfile prefilled with initial_text. Return the saved text.
-
-    Returns None if the editor exits non-zero or the user saves an empty file.
-    """
+    # Returns None if the editor exits non-zero or saves an empty file.
     editor = os.environ.get("EDITOR") or os.environ.get("VISUAL") or "vi"
     if not sys.stdin.isatty():
         raise RuntimeError(
