@@ -1,153 +1,121 @@
 ---
 name: pm-refine
-description: Use when the user wants to plan, scope, or refine work — creating epics, stories, or tasks; breaking down a feature; scaffolding a backlog. Triggers include "refine", "plan", "scope", "break down", "groom the backlog", "create epic/story", "let's plan X", "spin up a story", "what stories do we need". Requires a `.jira/` workspace at the repo root or a parent dir; if absent, suggest `pm clone` first. For implementing an already-scaffolded story, use the `pm-work` skill instead.
+description: Plan and scaffold work in a `.jira/` workspace via the `pm` CLI — creating epics, stories, and tasks; breaking features into a backlog. Triggers: "refine", "plan", "scope", "break down", "groom the backlog", "create epic/story". For implementing an already-scaffolded story, use `pm-work` instead.
 ---
 
 # pm-refine
 
-Use this skill to help the user **plan work** — scaffolding epics, stories, and tasks in the local `.jira/` mirror through the `pm` CLI. All edits stay local until the user runs `pm merge`.
+Two sections below:
 
-This skill is for *creating structure*. For implementing an existing story, use `pm-work`.
+1. **Core (locked)** — How to interact with `pm`. **Do not edit.**
+2. **Team preferences (editable)** — Title style, sizing rules, story-points policy. **Edit this** to match your team.
 
-## Workspace check
+<!-- ============================================================ -->
+<!-- ===================== CORE — DO NOT EDIT ==================== -->
+<!-- ============================================================ -->
+
+## Core (locked)
+
+> **Notice to the LLM:** Do not edit this section. It defines how you interact with `pm`. To change team conventions (titles, sizing, points, etc.), edit the **Team preferences** section below.
+
+`pm` ("pm shell") is a git-like CLI that mirrors a Jira board into a local `.jira/` directory. You read and edit tickets locally; nothing reaches Jira until the user runs `pm merge`. Most commands are **cwd-aware** — running them inside an epic or story dir infers the key.
+
+### Rules you must not break
+
+1. **Never run `pm merge` unprompted.** Every push to Jira requires explicit user approval — every time, not once-per-session.
+2. **Never edit `.jira/*.json` directly.** Always go through `pm` so `_unpushed` flags and key mappings stay correct.
+3. **Never touch `.jira/.baseline/` or `.jira/config.json`.** Managed by clone/pull; `config.json` holds credentials.
+4. **`pm clone --force` wipes local edits.** Suggest it only when the user wants to discard local state entirely.
+
+### Discover commands via `--help` — never assume
+
+**Always learn the current CLI surface from `pm --help` and `pm <command> --help`.** Do not rely on commands memorized from prior sessions; the CLI evolves. If a command you expect doesn't appear in `--help`, it doesn't exist — ask the user rather than guessing flag names.
 
 ```bash
-test -d .jira/ && which pm        # both should succeed
-pm tree                            # what already exists
+pm --help                 # top-level commands
+pm story --help           # subcommands for a group
+pm story create --help    # flags + usage
 ```
 
-If `pm` isn't on PATH it lives at `~/.local/bin/pm` — tell the user; don't try to install it yourself.
+### Before doing anything
 
-## The refinement loop
+```bash
+pm --help           # learn the CLI
+test -d .jira/      # confirm workspace
+pm tree             # see current state
+```
+
+If `pm` isn't on `PATH`, ask the user where it's installed (a common install path is `~/.local/bin/pm`, but don't assume) — don't try to install it yourself. If `.jira/` is missing, suggest `pm clone` and stop.
+
+### Refinement loop
 
 1. **Listen** to what the user wants.
-2. **Clarify** if the request is vague (see next section).
-3. **Scaffold** epics/stories/tasks via `pm` commands.
-4. **Review** with `pm tree` — show the user what was built.
-5. **Adjust** based on feedback (rename, re-parent, delete).
-6. **Stop** — never run `pm merge` unprompted.
+2. **Clarify** if vague (see Team preferences for question categories).
+3. **Scaffold** epics/stories/tasks via `pm` — exact commands via `pm --help`.
+4. **Review** with `pm tree` and show the user.
+5. **Adjust** based on feedback.
+6. **Stop.** Never run `pm merge`.
 
-## Clarify before scaffolding
+<!-- ============================================================ -->
+<!-- ============== TEAM PREFERENCES — EDIT BELOW ================ -->
+<!-- ============================================================ -->
 
-For any vague request ("we should improve auth", "let's plan the next sprint"), **ask 1–2 clarifying questions first**. Don't invent a 7-story epic from one sentence.
+## Team preferences (editable)
 
-Useful questions, by category:
+> **Edit this section** to match your team's planning conventions. Core above defines how the LLM talks to `pm`; this defines what your team considers good.
 
-- **Scope** — "What's in and out? Just the OAuth handler, or also session refresh and metrics?"
+### Clarify before scaffolding
+
+For vague requests ("we should improve auth", "let's plan next sprint"), **ask 1–2 clarifying questions first**. Don't invent a 7-story epic from one sentence.
+
+Useful categories:
+
+- **Scope** — "What's in and out?"
 - **Success** — "What does 'done' look like? User-facing change, internal API, both?"
-- **Priority** — "Must-have for the next release, or backlog candidate?"
+- **Priority** — "Must-have for next release, or backlog candidate?"
 - **Shape** — "One epic with several stories, or several smaller epics?"
 
-Ask the minimum needed. If the user is specific ("create an epic X with stories A, B, C"), skip the questions and scaffold.
+If the user is specific ("epic X with stories A, B, C"), skip questions and scaffold.
 
-## Title style guide
+### Titles
 
-| Item | Format | Good | Bad |
-|---|---|---|---|
-| Epic | Outcome-oriented noun phrase | "Authentication overhaul", "Mobile onboarding" | "Auth stuff", "Misc cleanup" |
-| Story | Action-oriented, user-facing when possible | "Add SSO via Okta", "Cache user permissions on first request" | "OAuth", "Permission work" |
-| Task | Imperative verb + concrete noun | "Wire OAuth callback handler", "Add unit tests for token refresh" | "OAuth callback", "Tests" |
+| Item  | Format                          | Example                       |
+| ----- | ------------------------------- | ----------------------------- |
+| Epic  | Outcome-oriented noun phrase    | "Authentication overhaul"     |
+| Story | Action-oriented, user-facing    | "Add SSO via Okta"            |
+| Task  | Imperative verb + concrete noun | "Wire OAuth callback handler" |
 
-Specifics over abstractions. "Add SSO via Okta" tells a future reader something; "Auth stuff" doesn't.
+Specifics over abstractions — "Add SSO via Okta" tells a future reader something; "Auth stuff" doesn't.
 
-## Creating epics
+### Sizing
 
-```bash
-pm epic create "Authentication overhaul" --priority high --label auth --description "..."
-# → NEW-1 placeholder
-```
+- **Epic** — weeks, not days. Decomposes into 3–15 stories. If it fits in one PR, it's a story, not an epic.
+- **Story** — passes **INVEST**: Independent, Valuable (vertical slice — not just "backend half"), Estimable, Small (~1–5 days), Testable (describe "done" in one sentence). 8+ subtasks → split.
+- **Task** — hours of work. Imperative verb + single completion criterion. 3–7 per story is healthy.
 
-An epic should:
+### Acceptance criteria — never invent
 
-- Take **weeks**, not days. If it fits in one PR, it's a story, not an epic.
-- Have a clear business or technical outcome.
-- Decompose into roughly 3–15 stories. More → split into multiple epics.
+Stories need acceptance criteria so the implementer knows when it's complete. **If the user hasn't given criteria, ask — don't make them up.** Hallucinated criteria create false confidence and misdirect future work.
 
-If the user gives context but no explicit description, summarize what you've heard into a `--description` capturing the *why*, the scope, and what success looks like. Always show the result and ask "does this capture it?"
+If the user gave context but no explicit criteria, summarize what you heard, show it, and ask: "does this capture it?"
 
-## Creating stories
+### Story points
 
-```bash
-pm story create "Add SSO via Okta" --epic NEW-1 --priority high
-# → NEW-2 under NEW-1
+**Leave points blank unless the user asks.** Points are team-relative — what's a "3" for one team is a "5" for another. An LLM guessing them adds noise to the backlog.
 
-# Inside an epic dir, --epic is inferred from cwd:
-cd NEW-1
-pm story create "Session refresh flow"
-```
+When the user asks: recommend **Fibonacci** (1, 2, 3, 5, 8). Anything ≥13 → split.
 
-A good story passes the **INVEST** check:
+### Epic descriptions
 
-- **Independent** — implementable without blocking on another story
-- **Valuable** — delivers a vertical slice (not just "backend half")
-- **Estimable** — small enough to size
-- **Small** — fits in ~1–5 days
-- **Testable** — there's a clear "done" condition
+If the user gives context but no explicit description, draft one capturing the *why*, the scope, and what success looks like. Show it and ask "does this capture it?" Don't write descriptions silently.
 
-If a story obviously needs 8+ subtasks, suggest splitting it. If you can't describe "done" in one sentence, it's too big or too vague.
+### Review with the user
 
-## Acceptance criteria — never invent
+After scaffolding, always show `pm tree` and ask explicitly: "Here's what I scaffolded. Want me to adjust anything, add more tasks, or move on?" Catching missing context now is cheaper than fixing structure later.
 
-Stories need acceptance criteria so the implementer knows when it's complete. **If the user hasn't given you the criteria, ask — don't make them up.** Hallucinated criteria create false confidence and misdirect future work.
+### What NOT to do
 
-When the user provides them, capture via:
-
-```bash
-pm story set NEW-2 --description "Acceptance criteria:
-- User can click 'Sign in with Okta' and complete the OAuth flow.
-- Failed auth shows a clear error message.
-- Session persists across browser restarts for 24h."
-```
-
-Or `pm story edit NEW-2` to open `$EDITOR` (only when the user is in an interactive shell).
-
-## Story points
-
-**Leave points blank unless the user asks.** Story points are team-relative — what's a "3" for one team is a "5" for another. An LLM guessing them adds noise to the backlog.
-
-When the user does ask, recommend Fibonacci: 1, 2, 3, 5, 8. Anything ≥13 should be split into smaller stories.
-
-```bash
-pm story set NEW-2 --points 5
-```
-
-## Creating tasks (subtasks under a story)
-
-```bash
-cd NEW-2
-pm task add "Wire OAuth callback handler"
-pm task add "Add session persistence layer"
-pm task add "Write integration tests for happy path"
-```
-
-Tasks are the *technical breakdown* — written for the implementer (often the same LLM that just refined them). They should:
-
-- Use imperative verbs ("Wire X", "Add Y", "Refactor Z").
-- Have a single clear completion criterion.
-- Be hours of work, not minutes or days.
-
-Rule of thumb: a story with 3–7 tasks is healthy. Fewer than 3 means tasks are too coarse; more than 7 usually means the story is too big.
-
-## Review with the user
-
-After scaffolding, always show what was built:
-
-```bash
-pm tree                # full workspace
-pm tree NEW-1          # just the new epic
-```
-
-Then ask explicitly: "Here's what I scaffolded. Want me to adjust anything, add more tasks, or move on?" Catching missing context now is cheaper than fixing structure later.
-
-## What NOT to do
-
-- **Don't run `pm merge`.** Refinement stays local until the user explicitly approves push.
 - **Don't invent acceptance criteria** the user hasn't given you.
 - **Don't auto-assign story points** unless asked.
-- **Don't over-decompose.** Three thoughtful tasks beat ten generic ones.
-- **Don't create epics for one-off work.** A standalone bug fix is a story or a task, not its own epic.
-- **Don't edit `.jira/*.json` files directly.** Use `pm` so `_unpushed` flags and key mappings stay correct.
-
-## Handoff to implementation
-
-When refinement is done and the user wants to start implementing one of the new stories, this skill is done. The `pm-work` skill takes over for the build phase.
+- **Don't over-decompose** — three thoughtful tasks beat ten generic ones.
+- **Don't create epics for one-off work** — a standalone bug fix is a story or a task.

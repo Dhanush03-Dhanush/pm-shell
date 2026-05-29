@@ -209,14 +209,20 @@ Every command supports `--help`. Inside the shell, `help` prints everything.
 
 ---
 
-## Claude Code skill
+## Claude Code skills
+
+Two skills under [`skills/`](skills/) drive `pm` for Claude Code:
+
+- [`pm-refine`](skills/pm-refine/SKILL.md) — planning: scaffolds epics/stories/tasks.
+- [`pm-work`](skills/pm-work/SKILL.md) — implementation: status updates, structured comments, pre-merge summaries.
 
 ```bash
-mkdir -p ~/.claude/skills/pm-shell
-cp skills/pm-shell/SKILL.md ~/.claude/skills/pm-shell/SKILL.md
+mkdir -p ~/.claude/skills/pm-refine ~/.claude/skills/pm-work
+cp skills/pm-refine/SKILL.md ~/.claude/skills/pm-refine/SKILL.md
+cp skills/pm-work/SKILL.md   ~/.claude/skills/pm-work/SKILL.md
 ```
 
-Once installed, Claude detects `.jira/` workspaces and drives `pm` to read state, mark tasks done as it works, log comments, scaffold epics during refinement, and surface changes with `status`/`diff`. **It never runs `pm merge` unprompted.** Full body: [`skills/pm-shell/SKILL.md`](skills/pm-shell/SKILL.md).
+Each `SKILL.md` is split into a locked **Core** (how to interact with `pm`) and an editable **Team preferences** section (your team's conventions). Both skills **never run `pm merge` unprompted** — push to Jira always requires explicit user approval. See [`skills/README.md`](skills/README.md) for details.
 
 ---
 
