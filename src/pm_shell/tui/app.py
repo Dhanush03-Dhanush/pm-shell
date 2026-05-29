@@ -298,6 +298,7 @@ class PMShell(App):
 
     def _handle_merge(self, extra_args: list[str]) -> None:
         from pm_shell.sync.diff import compute_changes
+        import subprocess
 
         log = self.query_one("#log", RichLog)
 
@@ -315,15 +316,13 @@ class PMShell(App):
             self._run_merge_live(dry_run=dry_run)
             return
 
-        log.write(Text.from_markup("[bold]Apply these changes to Jira?[/] [dim]\\[y/N][/]"))
-
-        def on_answer(answer: str) -> None:
-            if answer.lower() in ("y", "yes"):
-                self._run_merge_live(dry_run=False)
-            else:
-                log.write(Text.from_markup("[yellow]merge cancelled[/yellow]"))
-
-        self._pending_input = on_answer
+        log.write(Text.from_markup("[dim]merge requires sudo authentication…[/dim]"))
+        with self.suspend():
+            result = subprocess.run(["sudo", "-v"], check=False)
+        if result.returncode != 0:
+            log.write(Text.from_markup("[red]merge aborted:[/] sudo authentication failed"))
+            return
+        self._run_merge_live(dry_run=False)
 
     def _merge_preview_text(self, changes, *, dry_run: bool) -> Text:
         kinds = Counter(c.kind for c in changes)
@@ -488,8 +487,8 @@ _HELP_TEXT = Text.from_markup("""\
   [yellow]diff[/]                            opens the diff viewer (Esc to return)
   [yellow]diff KAN-5[/]                      inline diff for one item
 
-  [yellow]merge[/]                           push local changes to Jira (inline y/n prompt, then streams progress)
-    [dim]--yes[/] / [dim]-y[/]                 skip the confirmation
+  [yellow]merge[/]                           push local changes to Jira (sudo password prompt, then streams progress)
+    [dim]--yes[/] / [dim]-y[/]                 skip the sudo authentication (for CI)
     [dim]--dry-run[/]                  preview the API calls without contacting Jira
   [dim]pull[/]                            sync from Jira (Phase 7 — not yet)
 

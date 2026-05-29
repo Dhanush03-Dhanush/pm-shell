@@ -49,14 +49,14 @@ def status() -> None:
 def merge(
     yes: Annotated[
         bool,
-        typer.Option("--yes", "-y", help="Skip the confirmation prompt."),
+        typer.Option("--yes", "-y", help="Skip the sudo authentication prompt (for CI)."),
     ] = False,
     dry_run: Annotated[
         bool,
         typer.Option("--dry-run", help="Preview the API calls without contacting Jira."),
     ] = False,
 ) -> None:
-    """Push local changes to Jira. Asks for confirmation first."""
+    """Push local changes to Jira. Requires sudo authentication first."""
     changes = compute_changes()
     if not changes:
         console.print("[dim]workspace is clean — nothing to merge[/dim]")
@@ -64,9 +64,7 @@ def merge(
 
     _print_merge_preview(changes, dry_run=dry_run)
     if not yes and not dry_run:
-        if not typer.confirm("Apply these changes to Jira?", default=False):
-            console.print("[yellow]cancelled[/yellow]")
-            raise typer.Exit(code=1)
+        _require_sudo()
 
     try:
         cfg = load_config()
@@ -101,6 +99,16 @@ def diff(
             before_label=f"{c.file_label} (baseline)",
             after_label=f"{c.file_label} (current)",
         ))
+
+
+def _require_sudo() -> None:
+    """Validate the user's system password via `sudo -v`. Aborts on failure."""
+    import subprocess
+    console.print("[dim]merge requires sudo authentication.[/dim]")
+    result = subprocess.run(["sudo", "-v"], check=False)
+    if result.returncode != 0:
+        err_console.print("[red]merge aborted:[/] sudo authentication failed")
+        raise typer.Exit(code=1)
 
 
 def _print_summary_line(changes: list[Change]) -> None:
