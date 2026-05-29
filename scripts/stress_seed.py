@@ -1,6 +1,3 @@
-"""Seed local workspace with N epics × M stories (+ subtasks/comments) for stress-testing merge.
-Bypasses the typer CLI so scaffolding is fast — the slow part is the actual merge."""
-
 from __future__ import annotations
 
 import sys
