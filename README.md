@@ -1,4 +1,11 @@
 # pm-shell
+---
+
+<img width="312" height="73" alt="Screenshot 2026-05-29 at 3 02 18 PM" src="https://github.com/user-attachments/assets/43ce4c5d-c262-4f67-9e2f-04218ca7c7d6" />
+
+
+---
+
 
 **A git-like shell for Jira boards.** Clone a board into `.jira/`, edit it like source code, review with `status`/`diff`, push back with `merge`.
 
