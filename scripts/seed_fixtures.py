@@ -1,7 +1,3 @@
-"""Seed the configured Jira project with a small fixture set for testing.
-Not idempotent — re-running creates duplicates. Delete via the Jira UI to reset.
-Run: uv run python scripts/seed_fixtures.py"""
-
 from __future__ import annotations
 
 from typing import Any, Optional

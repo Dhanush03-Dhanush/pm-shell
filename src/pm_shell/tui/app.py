@@ -9,7 +9,7 @@ import os
 import shlex
 from collections import Counter
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Optional
+from typing import TYPE_CHECKING, Optional
 
 import click
 from prompt_toolkit.completion import CompleteEvent
@@ -95,8 +95,6 @@ class PMShell(App):
         self._history_idx: Optional[int] = None
         self._original_cwd: Optional[Path] = None
         self._known_commands = _collect_known_commands(typer_app)
-        # Routes next submitted line to this callback instead of dispatching it (y/n prompts).
-        self._pending_input: Optional[Callable[[str], None]] = None
 
     def compose(self) -> ComposeResult:
         yield Static(self._banner_text(), id="banner")
@@ -167,16 +165,6 @@ class PMShell(App):
         event.input.value = ""
 
         log = self.query_one("#log", RichLog)
-
-        if self._pending_input is not None:
-            pending = self._pending_input
-            self._pending_input = None
-            echo = self._context_label().copy()
-            echo.append(" ")
-            echo.append(raw)
-            log.write(echo)
-            pending(raw.strip())
-            return
 
         line = raw.strip()
         if not line:
