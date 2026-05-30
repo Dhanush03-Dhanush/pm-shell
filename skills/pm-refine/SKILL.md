@@ -1,6 +1,6 @@
 ---
 name: pm-refine
-description: Plan and scaffold work in a `.jira/` workspace via the `pm` CLI — creating epics, stories, and tasks; breaking features into a backlog. Triggers: "refine", "plan", "scope", "break down", "groom the backlog", "create epic/story". For implementing an already-scaffolded story, use `pm-work` instead.
+description: 'Plan and scaffold work in a `.jira/` workspace via the `pm` CLI — creating epics, stories, and tasks; breaking features into a backlog. Triggers: "refine", "plan", "scope", "break down", "groom the backlog", "create epic/story". For implementing an already-scaffolded story, use `pm-work` instead.'
 ---
 
 # pm-refine
