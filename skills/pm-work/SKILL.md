@@ -1,6 +1,6 @@
 ---
 name: pm-work
-description: Implement a Jira story tracked in a `.jira/` workspace via the `pm` CLI — updating status as tasks complete and logging decisions/gotchas to story comments. Triggers: "implement KAN-N", "work on KAN-N", "start the story", "finish KAN-N", "mark done", "wrap up". For creating new epics/stories from scratch, use `pm-refine` instead.
+description: 'Implement a Jira story tracked in a `.jira/` workspace via the `pm` CLI — updating status as tasks complete and logging decisions/gotchas to story comments. Triggers: "implement KAN-N", "work on KAN-N", "start the story", "finish KAN-N", "mark done", "wrap up". For creating new epics/stories from scratch, use `pm-refine` instead.'
 ---
 
 # pm-work
